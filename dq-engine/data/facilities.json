@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Test Hospital",
+    "orgUnitId": "TEST123",
+    "email": [
+      "test@hospital.com"
+    ],
+    "whatsapp": [
+      "+1234567890"
+    ],
+    "sms": [],
+    "enabled": true,
+    "notificationPreferences": {
+      "dqRuns": true,
+      "comparisons": true,
+      "emailEnabled": true,
+      "whatsappEnabled": true,
+      "smsEnabled": false
+    },
+    "id": "facility_1753341117291_e06t5mf8t",
+    "createdAt": "2025-07-24T07:11:57.290Z",
+    "updatedAt": "2025-07-24T07:11:57.290Z"
+  },
+  {
+    "name": "Adilang HCIII",
+    "orgUnitId": "FvewOonC8lS",
+    "email": [
+      "amutesasira@hispuganda.org"
+    ],
+    "whatsapp": [
+      "+256700372842",
+      "+256772080606"
+    ],
+    "sms": [],
+    "enabled": true,
+    "notificationPreferences": {
+      "dqRuns": true,
+      "comparisons": true,
+      "emailEnabled": true,
+      "whatsappEnabled": true,
+      "smsEnabled": false
+    },
+    "id": "facility_1753342033705_7yk0v42d1",
+    "createdAt": "2025-07-24T07:27:13.705Z",
+    "updatedAt": "2025-07-24T07:28:47.644Z"
+  }
+]

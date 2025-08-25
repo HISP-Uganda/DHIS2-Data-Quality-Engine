@@ -1,0 +1,20 @@
+
+> IWS-App@1.0.0 start
+> d2-app-scripts start --proxy https://hmis-tests.health.go.ug
+
+ 
+Starting proxy server... 
+The proxy for https://hmis-tests.health.go.ug is now available on port 8081 
+ 
+Generating internationalization strings... 
+No i18n updates found! 
+Bootstrapping local appShell... 
+A local appShell exists, skipping bootstrap. Use --force to update. 
+Building app IWS-App... 
+Generating manifests... 
+ 
+Starting development server... 
+The app IWS-App is now available on port 3000 
+ 
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: use --host to expose

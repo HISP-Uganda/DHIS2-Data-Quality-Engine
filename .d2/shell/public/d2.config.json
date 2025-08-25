@@ -1,0 +1,10 @@
+{
+  "type": "app",
+  "name": "IWS-App",
+  "version": "1.0.0",
+  "description": "",
+  "title": "IWS-App",
+  "entryPoints": {
+    "app": "index.html"
+  }
+}
