@@ -2,7 +2,6 @@ import express from 'express'
 import cors from 'cors'
 import bodyParser from 'body-parser'
 import { ConfigurationStorage } from './configStorage'
-import type { DQRunConfiguration, ComparisonConfiguration } from './types'
 
 import {
   listSchedules,
@@ -1092,7 +1091,7 @@ app.post('/api/comparison-configs/:id/run', async (req, res) => {
 })
 
 
-app.get('/api/dashboard-metrics', (req, res) => {
+app.get('/api/dashboard-metrics', (_req, res) => {
   console.log('[DQ API] GET /api/dashboard-metrics')
 
   try {
@@ -1102,7 +1101,7 @@ app.get('/api/dashboard-metrics', (req, res) => {
 
 
     const totalDatasetComparisons = configs.reduce((sum, config) => sum + (config.datasetCount || 0), 0)
-    const totalElementGroups = configs.reduce((sum, config) => sum + (config.groupCount || 0), 0)
+    // const totalElementGroups = configs.reduce((sum, config) => sum + (config.groupCount || 0), 0)
 
 
     const metrics = {

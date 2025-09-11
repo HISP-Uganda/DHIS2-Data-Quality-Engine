@@ -2,12 +2,11 @@ import React, { useState } from 'react'
 import {
     Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalFooter,
     ModalCloseButton, Button, VStack, HStack, Text, Input, Textarea,
-    FormControl, FormLabel, Select, Stepper, Step, StepIndicator,
+    FormControl, FormLabel, Stepper, Step, StepIndicator,
     StepStatus, StepIcon, StepNumber, StepTitle, StepDescription,
-    StepSeparator, useSteps, Box, Alert, AlertIcon, Checkbox,
-    CheckboxGroup, Stack, Badge, useToast
+    StepSeparator, useSteps, Box, Alert, AlertIcon, Badge, useToast
 } from '@chakra-ui/react'
-import { FaArrowRight, FaArrowLeft, FaCheck, FaSave } from 'react-icons/fa'
+import { FaArrowRight, FaArrowLeft, FaSave } from 'react-icons/fa'
 import DataComparisonModal from './DataComparisonModal'
 
 interface ConfigurationWizardProps {
@@ -52,12 +51,12 @@ export default function ConfigurationWizard({
             // Open comparison modal for dataset selection and mapping
             setShowComparisonModal(true)
         } else {
-            setActiveStep((prev) => Math.min(prev + 1, steps.length - 1))
+            setActiveStep(Math.min(activeStep + 1, steps.length - 1))
         }
     }
 
     const handleBack = () => {
-        setActiveStep((prev) => Math.max(prev - 1, 0))
+        setActiveStep(Math.max(activeStep - 1, 0))
     }
 
     const handleReset = () => {
@@ -382,13 +381,22 @@ export default function ConfigurationWizard({
                 <DataComparisonModal
                     isOpen={showComparisonModal}
                     onClose={() => setShowComparisonModal(false)}
+                    sourceUrl={destinationUrl}
+                    sourceUser={destinationUser}
+                    sourcePass={destinationPass}
+                    selectedSourceDataset=""
+                    selectedSourceOrgUnits={[]}
+                    selectedSourceOrgNames={[]}
+                    selectedDataElements={[]}
                     destinationUrl={destinationUrl}
                     destinationUser={destinationUser}
                     destinationPass={destinationPass}
-                    destinationOrgUnit="ImspTQPwCqd" // Default org unit for mapping
-                    period="202501" // Default period for mapping
+                    destinationOrgUnit="ImspTQPwCqd"
                     targetDatasetId=""
-                    // Add callback to capture the configuration when save is clicked
+                    selectedDestOrgUnits={[]}
+                    selectedDestOrgNames={[]}
+                    dataElementMapping=""
+                    period="202501"
                     onConfigurationComplete={(datasets: string[], groups: any[]) => {
                         handleComparisonComplete(datasets, groups)
                     }}

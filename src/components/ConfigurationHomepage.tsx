@@ -4,7 +4,7 @@ import {
     Spinner, useToast, SimpleGrid, Icon, Divider, Flex, Menu, MenuButton, MenuList,
     MenuItem, IconButton, useDisclosure, Modal, ModalOverlay, ModalContent,
     ModalHeader, ModalBody, ModalCloseButton, Input, FormControl, FormLabel,
-    Textarea, Select
+    Textarea
 } from '@chakra-ui/react'
 import { FaPlus, FaPlay, FaEdit, FaTrash, FaCog, FaRocket, FaCalendar, FaDatabase, FaEllipsisV, FaBookmark, FaSync } from 'react-icons/fa'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -12,29 +12,25 @@ import {
     getSavedConfigurations, 
     deleteConfiguration, 
     toggleConfigurationStatus, 
-    runSavedConfiguration,
     updateConfiguration,
     getConfiguration,
     type SavedConfigurationSummary,
     type ComparisonConfiguration 
 } from '../api'
-import OrgUnitTreeSelector from './OrgUnitTreeSelector'
 
 interface ConfigurationHomepageProps {
     onCreateNew: () => void
     onRunConfiguration: (configId: string, configName: string) => void
-    onQuickRunComparison: (config: ComparisonConfiguration) => void
 }
 
 export default function ConfigurationHomepage({ 
     onCreateNew, 
-    onRunConfiguration,
-    onQuickRunComparison
+    onRunConfiguration
 }: ConfigurationHomepageProps) {
     const toast = useToast()
     const queryClient = useQueryClient()
     // Keep selected config for other operations (like edit)
-    const [selectedConfig, setSelectedConfig] = useState<SavedConfigurationSummary | null>(null)
+    // const [selectedConfig, setSelectedConfig] = useState<SavedConfigurationSummary | null>(null)
     
     // Edit configuration state
     const [editingConfig, setEditingConfig] = useState<ComparisonConfiguration | null>(null)
@@ -287,7 +283,7 @@ export default function ConfigurationHomepage({
                             colorScheme="green"
                             leftIcon={<FaPlay />}
                             onClick={() => handleQuickRun(config)}
-                            isFullWidth
+                            width="100%"
                         >
                             Quick Run
                         </Button>

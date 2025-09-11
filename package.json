@@ -6,10 +6,10 @@
   "private": true,
   "scripts": {
     "build": "d2-app-scripts build",
-    "start": "d2-app-scripts start --proxy https://hmis-tests.health.go.ug",
+    "start": "d2-app-scripts start --proxy https://dqas.hispuganda.org/dqa360",
     "test": "d2-app-scripts test",
     "deploy": "d2-app-scripts deploy",
-    "dev": "concurrently \"d2-app-scripts start --proxy https://hmis-tests.health.go.ug\" \"cd dq-engine && yarn dev\"",
+    "dev": "concurrently \"d2-app-scripts start --proxy https://dqas.hispuganda.org/dqa360\" \"cd dq-engine && yarn dev\"",
     "dev-local": "concurrently \"d2-app-scripts start\" \"cd dq-engine && yarn dev\""
   },
   "devDependencies": {

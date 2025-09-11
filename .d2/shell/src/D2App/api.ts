@@ -71,7 +71,47 @@ export async function runDQ(params: RunDQParams) {
                 return resp.statusText
             })
             console.log('[api.ts] ← Error response body:', err)
-            throw new Error(`DQ run failed: ${resp.status} ${err}`)
+            
+            // Parse error response to provide better error messages
+            let errorMessage = `DQ run failed: ${resp.status} ${err}`
+            let parsedError = null
+            
+            try {
+                parsedError = JSON.parse(err)
+            } catch (e) {
+                // Error is not JSON, use as-is
+            }
+            
+            if (parsedError && parsedError.error) {
+                // Check for data element mapping conflicts
+                if (parsedError.error.includes('Failed to post to destination') && 
+                    parsedError.error.includes('Data element not found or not accessible')) {
+                    
+                    const missingElements = []
+                    const elementMatches = parsedError.error.match(/Data element not found or not accessible: `([^`]+)`/g)
+                    if (elementMatches) {
+                        elementMatches.forEach((match: string) => {
+                            const elementIdMatch = match.match(/`([^`]+)`/)
+                            if (elementIdMatch) {
+                                const elementId = elementIdMatch[1]
+                                if (!missingElements.includes(elementId)) {
+                                    missingElements.push(elementId)
+                                }
+                            }
+                        })
+                    }
+                    
+                    if (missingElements.length > 0) {
+                        errorMessage = `Data Element Mapping Error: ${missingElements.length} data elements are missing or not accessible in the destination DHIS2 instance.\n\n` +
+                                     `Missing elements: ${missingElements.slice(0, 5).join(', ')}${missingElements.length > 5 ? ` and ${missingElements.length - 5} more` : ''}\n\n` +
+                                     `Solution: Edit your configuration and add mappings for these data elements, or verify that these elements exist in the destination instance.`
+                    }
+                } else {
+                    errorMessage = parsedError.error
+                }
+            }
+            
+            throw new Error(errorMessage)
         }
         
         console.log('[api.ts] ← Response OK, parsing JSON...')

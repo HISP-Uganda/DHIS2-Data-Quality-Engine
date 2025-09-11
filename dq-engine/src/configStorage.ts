@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { DQRunConfiguration, ComparisonConfiguration, SavedConfigurationSummary } from './types'
+import { ComparisonConfiguration, SavedConfigurationSummary } from './types'
 
 const CONFIG_DIR = path.join(__dirname, '..', 'data', 'comparison-configs')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'configurations.json')

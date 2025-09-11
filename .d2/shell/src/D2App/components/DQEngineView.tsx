@@ -154,13 +154,20 @@ export default function DQEngineView() {
                 console.error('[DQEngineView] Error stack:', error.stack)
                 setProgressMessage(`DQ check failed: ${error.message}`)
 
-                // Show error toast
+                // Parse error message for better display
+                const isDataElementError = error.message?.includes('Data Element Mapping Error')
+                const errorLines = error.message?.split('\n') || []
+                
+                // Show error toast with improved formatting
                 toast({
                     status: 'error',
-                    title: 'DQ Engine Failed',
-                    description: error.message || 'An unknown error occurred',
-                    duration: 8000,
-                    isClosable: true
+                    title: isDataElementError ? 'Data Element Mapping Required' : 'DQ Engine Failed',
+                    description: isDataElementError && errorLines.length > 2 
+                        ? `${errorLines[0]}\n\n${errorLines[2]}\n\n${errorLines[4] || 'Edit your configuration to add the required mappings.'}`
+                        : error.message || 'An unknown error occurred',
+                    duration: isDataElementError ? 12000 : 8000,
+                    isClosable: true,
+                    variant: isDataElementError ? 'left-accent' : 'solid'
                 })
 
                 throw error
@@ -223,11 +230,20 @@ export default function DQEngineView() {
         },
         onError: (error) => {
             console.error('[DQEngineView] onError callback:', error)
+            
+            // Parse error message for better display
+            const isDataElementError = error.message?.includes('Data Element Mapping Error')
+            const errorLines = error.message?.split('\n') || []
+            
             toast({
                 status: 'error',
-                title: 'DQ Engine failed',
-                description: error.message,
-                duration: 5000
+                title: isDataElementError ? 'Data Element Mapping Required' : 'DQ Engine failed',
+                description: isDataElementError && errorLines.length > 2 
+                    ? `${errorLines[0]}\n\n${errorLines[2]}\n\nPlease edit your configuration to add the required mappings.`
+                    : error.message,
+                duration: isDataElementError ? 12000 : 5000,
+                isClosable: true,
+                variant: isDataElementError ? 'left-accent' : 'solid'
             })
         },
     })
@@ -1037,15 +1053,6 @@ export default function DQEngineView() {
                                             duration: 4000
                                         })
                                     }
-                                }}
-                                onQuickRunComparison={(config) => {
-                                    console.log('[DQEngineView] Quick Run callback received config:', config)
-                                    console.log('[DQEngineView] Dest org units:', config.selectedDestOrgUnits)
-                                    console.log('[DQEngineView] Source org units:', config.selectedSourceOrgUnits)
-                                    console.log('[DQEngineView] About to set destinationOrgUnit to:', config.selectedDestOrgUnits?.[0] || config.selectedSourceOrgUnits?.[0] || 'EMPTY!')
-                                    // Set configuration data and open DataComparisonModal
-                                    setQuickRunConfig(config)
-                                    setQuickRunModalOpen(true)
                                 }}
                             />
                         </Box>
