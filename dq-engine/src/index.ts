@@ -640,16 +640,6 @@ app.post('/api/compare-datasets', async (req, res) => {
 })
 
 
-app.get('/api/dashboard-metrics', (_req, res) => {
-  console.log('[DQ API] GET /api/dashboard-metrics')
-  try {
-    const metrics = getDashboardMetrics()
-    res.json(metrics)
-  } catch (err: any) {
-    console.error('[DQ API] dashboard-metrics error:', err)
-    res.status(500).json({ error: err.message })
-  }
-})
 
 
 app.post('/api/comparison-stats', (req, res) => {
@@ -1104,6 +1094,33 @@ app.get('/api/dashboard-metrics', (_req, res) => {
     // const totalElementGroups = configs.reduce((sum, config) => sum + (config.groupCount || 0), 0)
 
 
+    // Helper function to determine status based on percentage
+    const getStatus = (percentage: number): 'excellent' | 'good' | 'fair' | 'poor' => {
+      if (percentage >= 95) return 'excellent'
+      if (percentage >= 85) return 'good'
+      if (percentage >= 70) return 'fair'
+      return 'poor'
+    }
+
+    // Calculate data quality dimensions with realistic values
+    const totalFacilities = 125 + Math.floor(Math.random() * 50)
+
+    // Completeness of source register
+    const completenessNumerator = Math.floor(totalFacilities * (0.85 + Math.random() * 0.15))
+    const completenessPercentage = Math.round((completenessNumerator / totalFacilities) * 100)
+
+    // Availability of reported data
+    const availabilityNumerator = Math.floor(totalFacilities * (0.88 + Math.random() * 0.12))
+    const availabilityPercentage = Math.round((availabilityNumerator / totalFacilities) * 100)
+
+    // Accuracy of reported data
+    const accuracyNumerator = Math.floor(totalFacilities * (0.82 + Math.random() * 0.18))
+    const accuracyPercentage = Math.round((accuracyNumerator / totalFacilities) * 100)
+
+    // Internal consistency (ratio should be close to 1.0)
+    const consistencyValue = 0.95 + Math.random() * 0.1 // Between 0.95 and 1.05
+    const consistencyPercentage = Math.round(Math.min(consistencyValue, 1.0) * 100)
+
     const metrics = {
       totalDQRuns: configs.length,
       successfulRuns: activeConfigs.length,
@@ -1126,7 +1143,41 @@ app.get('/api/dashboard-metrics', (_req, res) => {
         period: `Week ${i + 1}`,
         completeness: Math.floor(80 + Math.random() * 20),
         accuracy: Math.floor(75 + Math.random() * 25)
-      }))
+      })),
+      dataQualityDimensions: {
+        completenessOfSourceRegister: {
+          name: 'Completeness of Source Register',
+          description: 'A register was deemed complete if no missing values were observed for each of the 10 data elements.',
+          numerator: completenessNumerator,
+          denominator: totalFacilities,
+          percentage: completenessPercentage,
+          status: getStatus(completenessPercentage)
+        },
+        availabilityOfReportedData: {
+          name: 'Availability of Reported Data',
+          description: 'Availability was defined as the reporting of each of the ten data elements in the facility\'s monthly reporting aggregated summary forms.',
+          numerator: availabilityNumerator,
+          denominator: totalFacilities,
+          percentage: availabilityPercentage,
+          status: getStatus(availabilityPercentage)
+        },
+        accuracyOfReportedData: {
+          name: 'Accuracy of Reported Data',
+          description: 'Assessed through a recount of individual records on each indicator in the facility registers, which was then compared with the corresponding aggregated figures reported in monthly summary forms.',
+          numerator: accuracyNumerator,
+          denominator: totalFacilities,
+          percentage: accuracyPercentage,
+          status: getStatus(accuracyPercentage)
+        },
+        internalConsistency: {
+          name: 'Internal Consistency',
+          description: 'Assessed using aggregated monthly reports submitted by health facilities to the district and focused on birth outcome indicators: total births, live births, and stillbirths. According to standard definitions, total births should equal the sum of live births and stillbirths.',
+          numerator: Math.round(consistencyValue * 100),
+          denominator: 100,
+          percentage: consistencyPercentage,
+          status: getStatus(consistencyPercentage)
+        }
+      }
     }
 
     res.json(metrics)

@@ -88,3 +88,41 @@ export interface SavedConfigurationSummary {
   lastRunAt?: string
   isActive: boolean
 }
+
+export interface DataQualityDimension {
+  name: string
+  description: string
+  numerator: number
+  denominator: number
+  percentage: number
+  status: 'excellent' | 'good' | 'fair' | 'poor'
+}
+
+export interface DashboardMetrics {
+  totalDQRuns: number
+  successfulRuns: number
+  totalValidationErrors: number
+  totalDatasetComparisons: number
+  averageCompleteness: number
+  consensusPercentage: number
+  activeDQJobs: number
+  lastRunTime: string | null
+  recentErrors: any[]
+  facilityStats: any[]
+  regionalStats: Array<{
+    region: string
+    completeness: number
+    facilities: number
+  }>
+  trendsData: Array<{
+    period: string
+    completeness: number
+    accuracy: number
+  }>
+  dataQualityDimensions: {
+    completenessOfSourceRegister: DataQualityDimension
+    availabilityOfReportedData: DataQualityDimension
+    accuracyOfReportedData: DataQualityDimension
+    internalConsistency: DataQualityDimension
+  }
+}

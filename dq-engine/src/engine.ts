@@ -359,17 +359,35 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
 
             const destinationDataValues: any[] = []
 
+            console.log(`[Engine] Processing ${rawData.dataValues.length} data values for destination`)
+            console.log(`[Engine] Data element mapping:`, dataElementMapping)
+            
+            let totalProcessed = 0
+            let skippedCount = 0
+            
             destinationOrgUnits.forEach(destOu => {
                 rawData.dataValues.forEach(dv => {
-                    const mappedDataElement = dataElementMapping?.[dv.dataElement] || dv.dataElement
-                    destinationDataValues.push({
-                        dataElement: mappedDataElement,
-                        period: period,
-                        orgUnit: destOu,
-                        value: dv.value
-                    })
+                    totalProcessed++
+                    // Only process data elements that have explicit mappings
+                    if (dataElementMapping && dataElementMapping[dv.dataElement]) {
+                        const mappedDataElement = dataElementMapping[dv.dataElement]
+                        destinationDataValues.push({
+                            dataElement: mappedDataElement,
+                            period: period,
+                            orgUnit: destOu,
+                            value: dv.value
+                        })
+                    } else {
+                        skippedCount++
+                        // Skip data elements without mappings
+                        if (skippedCount <= 5) {
+                            console.log(`[Engine] Skipping unmapped data element: ${dv.dataElement}`)
+                        }
+                    }
                 })
             })
+            
+            console.log(`[Engine] Processed ${totalProcessed} values, included ${destinationDataValues.length}, skipped ${skippedCount} unmapped`)
 
             const postPayload = {
                 dataValues: destinationDataValues

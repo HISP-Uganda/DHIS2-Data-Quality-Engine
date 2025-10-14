@@ -110,7 +110,41 @@ const DashboardView: React.FC = () => {
             { period: 'Week 5', completeness: 0, accuracy: 0 },
             { period: 'Week 6', completeness: 0, accuracy: 0 },
             { period: 'Week 7', completeness: 0, accuracy: 0 },
-        ]
+        ],
+        dataQualityDimensions: {
+            completenessOfSourceRegister: {
+                name: 'Completeness of Source Register',
+                description: 'No data available',
+                numerator: 0,
+                denominator: 0,
+                percentage: 0,
+                status: 'poor' as const
+            },
+            availabilityOfReportedData: {
+                name: 'Availability of Reported Data',
+                description: 'No data available',
+                numerator: 0,
+                denominator: 0,
+                percentage: 0,
+                status: 'poor' as const
+            },
+            accuracyOfReportedData: {
+                name: 'Accuracy of Reported Data',
+                description: 'No data available',
+                numerator: 0,
+                denominator: 0,
+                percentage: 0,
+                status: 'poor' as const
+            },
+            internalConsistency: {
+                name: 'Internal Consistency',
+                description: 'No data available',
+                numerator: 0,
+                denominator: 0,
+                percentage: 0,
+                status: 'poor' as const
+            }
+        }
     }
     
     const displayMetrics = dashboardMetrics || fallbackMetrics
@@ -374,6 +408,154 @@ const DashboardView: React.FC = () => {
         ],
     }
 
+    // Data Quality Dimensions Bar Chart
+    const dataQualityDimensionsBarOption: echarts.EChartsOption = {
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: (params: any) => {
+                const data = params[0]
+                const dimension = displayMetrics.dataQualityDimensions
+                const dimData = Object.values(dimension)[data.dataIndex]
+                return `${dimData.name}<br/>
+                        ${dimData.numerator}/${dimData.denominator} facilities<br/>
+                        <strong>${dimData.percentage}%</strong>`
+            }
+        },
+        xAxis: {
+            type: 'value',
+            axisLine: { lineStyle: { color: textColor } },
+            axisLabel: { color: textColor, formatter: '{value}%' },
+            max: 100,
+        },
+        yAxis: {
+            type: 'category',
+            data: [
+                'Internal\nConsistency',
+                'Accuracy of\nReported Data',
+                'Availability of\nReported Data',
+                'Completeness of\nSource Register'
+            ],
+            axisLine: { lineStyle: { color: textColor } },
+            axisLabel: { color: textColor, fontSize: 11 },
+        },
+        series: [
+            {
+                name: 'Percentage',
+                type: 'bar',
+                data: [
+                    displayMetrics.dataQualityDimensions.internalConsistency.percentage,
+                    displayMetrics.dataQualityDimensions.accuracyOfReportedData.percentage,
+                    displayMetrics.dataQualityDimensions.availabilityOfReportedData.percentage,
+                    displayMetrics.dataQualityDimensions.completenessOfSourceRegister.percentage
+                ],
+                itemStyle: {
+                    color: (params: any) => {
+                        const percentage = params.value
+                        if (percentage >= 95) return '#38A169'
+                        if (percentage >= 85) return '#68D391'
+                        if (percentage >= 70) return '#F6AD55'
+                        return '#FC8181'
+                    }
+                },
+                barWidth: '60%',
+                animationDuration: 800,
+                label: {
+                    show: true,
+                    position: 'right',
+                    formatter: '{c}%',
+                    color: textColor,
+                },
+            },
+        ],
+    }
+
+    // Data Quality Dimensions Gauge Chart
+    const dataQualityDimensionsGaugeOption: echarts.EChartsOption = {
+        series: Object.values(displayMetrics.dataQualityDimensions).map((dim, index) => ({
+            type: 'gauge',
+            center: [`${25 + (index % 2) * 50}%`, `${25 + Math.floor(index / 2) * 50}%`],
+            radius: '35%',
+            progress: { show: true, width: 8 },
+            axisLine: {
+                lineStyle: {
+                    width: 8,
+                    color: [[dim.percentage / 100,
+                        dim.status === 'excellent' ? '#38A169' :
+                        dim.status === 'good' ? '#68D391' :
+                        dim.status === 'fair' ? '#F6AD55' : '#FC8181'
+                    ], [1, '#FED7D7']]
+                },
+            },
+            axisTick: { show: false },
+            splitLine: { show: false },
+            axisLabel: { show: false },
+            detail: {
+                valueAnimation: true,
+                fontSize: 14,
+                color: textColor,
+                formatter: '{value}%',
+                offsetCenter: [0, '20%']
+            },
+            title: {
+                fontSize: 10,
+                color: textColor,
+                offsetCenter: [0, '-30%'],
+            },
+            data: [{ value: dim.percentage, name: dim.name.split(' ').slice(0, 2).join(' ') }],
+            animationDuration: 1000,
+        }))
+    }
+
+    // Data Quality Dimensions Radar Chart
+    const dataQualityDimensionsRadarOption: echarts.EChartsOption = {
+        radar: {
+            indicator: [
+                { name: 'Completeness', max: 100 },
+                { name: 'Availability', max: 100 },
+                { name: 'Accuracy', max: 100 },
+                { name: 'Consistency', max: 100 },
+            ],
+            axisName: {
+                color: textColor,
+                fontSize: 12
+            },
+            splitArea: {
+                areaStyle: {
+                    color: ['rgba(56, 178, 172, 0.1)', 'rgba(56, 178, 172, 0.05)']
+                }
+            }
+        },
+        series: [
+            {
+                name: 'Data Quality Dimensions',
+                type: 'radar',
+                data: [
+                    {
+                        value: [
+                            displayMetrics.dataQualityDimensions.completenessOfSourceRegister.percentage,
+                            displayMetrics.dataQualityDimensions.availabilityOfReportedData.percentage,
+                            displayMetrics.dataQualityDimensions.accuracyOfReportedData.percentage,
+                            displayMetrics.dataQualityDimensions.internalConsistency.percentage,
+                        ],
+                        name: 'Current Performance',
+                        areaStyle: {
+                            color: 'rgba(56, 178, 172, 0.2)'
+                        },
+                        lineStyle: {
+                            color: '#38B2AC',
+                            width: 2
+                        },
+                        itemStyle: {
+                            color: '#38B2AC'
+                        }
+                    }
+                ],
+                animationDuration: 1000
+            }
+        ]
+    }
+
     // Show loading state
     if (isLoading) {
         return (
@@ -483,7 +665,7 @@ const DashboardView: React.FC = () => {
             </SimpleGrid>
 
             {/* ROW 3 */}
-            <SimpleGrid columns={{ base: 1, md: 3 }} gap={6}>
+            <SimpleGrid columns={{ base: 1, md: 3 }} gap={6} mb={8}>
                 {[
                     { opt: orgUnitCompletionOption, label: 'Regional Data Completeness' },
                     { opt: facilityValidationOption, label: 'Validation Issues by Facility' },
@@ -498,6 +680,115 @@ const DashboardView: React.FC = () => {
                         </AspectRatio>
                     </Box>
                 ))}
+            </SimpleGrid>
+
+            {/* DATA QUALITY DIMENSIONS SECTION */}
+            <Box mb={6}>
+                <Text fontSize="xl" fontWeight="bold" color={headingColor} mb={4}>
+                    Data Quality Dimensions
+                </Text>
+                <Text fontSize="sm" color={textColor} mb={6}>
+                    Comprehensive assessment of data quality across four key dimensions: completeness, availability, accuracy, and internal consistency.
+                </Text>
+            </Box>
+
+            {/* ROW 4 - Data Quality Dimensions */}
+            <SimpleGrid columns={{ base: 1, md: 2 }} gap={6} mb={8}>
+                <Box bg={cardBg} p={6} borderRadius="md" boxShadow="md">
+                    <Text fontSize="lg" mb={4} color={headingColor}>
+                        Dimensions Overview (Bar Chart)
+                    </Text>
+                    <AspectRatio ratio={4 / 3}>
+                        <ReactECharts option={dataQualityDimensionsBarOption} style={{ width: '100%' }} />
+                    </AspectRatio>
+                </Box>
+
+                <Box bg={cardBg} p={6} borderRadius="md" boxShadow="md">
+                    <Text fontSize="lg" mb={4} color={headingColor}>
+                        Performance Radar
+                    </Text>
+                    <AspectRatio ratio={4 / 3}>
+                        <ReactECharts option={dataQualityDimensionsRadarOption} style={{ width: '100%' }} />
+                    </AspectRatio>
+                </Box>
+            </SimpleGrid>
+
+            {/* ROW 5 - Data Quality Dimensions Gauges */}
+            <Box bg={cardBg} p={6} borderRadius="md" boxShadow="md" mb={8}>
+                <Text fontSize="lg" mb={4} color={headingColor}>
+                    Data Quality Dimensions - Multi-Gauge View
+                </Text>
+                <AspectRatio ratio={2 / 1}>
+                    <ReactECharts option={dataQualityDimensionsGaugeOption} style={{ width: '100%' }} />
+                </AspectRatio>
+            </Box>
+
+            {/* ROW 6 - Detailed Dimension Cards */}
+            <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} gap={6}>
+                {Object.entries(displayMetrics.dataQualityDimensions).map(([key, dimension]) => {
+                    const typedDimension = dimension as {
+                        name: string
+                        description: string
+                        numerator: number
+                        denominator: number
+                        percentage: number
+                        status: 'excellent' | 'good' | 'fair' | 'poor'
+                    }
+                    return (
+                    <Box key={key} bg={cardBg} p={6} borderRadius="md" boxShadow="md" border="1px solid #E2E8F0">
+                        <VStack align="start" spacing={3}>
+                            <HStack justify="space-between" w="100%">
+                                <Text fontSize="md" fontWeight="bold" color={headingColor}>
+                                    {typedDimension.name}
+                                </Text>
+                                <Badge
+                                    colorScheme={
+                                        typedDimension.status === 'excellent' ? 'green' :
+                                        typedDimension.status === 'good' ? 'blue' :
+                                        typedDimension.status === 'fair' ? 'yellow' : 'red'
+                                    }
+                                    variant="solid"
+                                >
+                                    {typedDimension.status.toUpperCase()}
+                                </Badge>
+                            </HStack>
+
+                            <Text fontSize="xs" color={textColor} noOfLines={3}>
+                                {typedDimension.description}
+                            </Text>
+
+                            <VStack align="start" spacing={1} w="100%">
+                                <HStack justify="space-between" w="100%">
+                                    <Text fontSize="sm" color={textColor}>
+                                        Progress:
+                                    </Text>
+                                    <Text fontSize="sm" fontWeight="bold" color={headingColor}>
+                                        {typedDimension.percentage}%
+                                    </Text>
+                                </HStack>
+
+                                <Box w="100%" bg="gray.200" borderRadius="full" h="8px">
+                                    <Box
+                                        bg={
+                                            typedDimension.status === 'excellent' ? 'green.500' :
+                                            typedDimension.status === 'good' ? 'blue.500' :
+                                            typedDimension.status === 'fair' ? 'yellow.500' : 'red.500'
+                                        }
+                                        h="100%"
+                                        borderRadius="full"
+                                        w={`${typedDimension.percentage}%`}
+                                        transition="width 0.5s ease"
+                                    />
+                                </Box>
+
+                                <Text fontSize="xs" color={textColor}>
+                                    {typedDimension.numerator} out of {typedDimension.denominator} facilities
+                                </Text>
+                            </VStack>
+                        </VStack>
+                    </Box>
+                    )
+                })}
             </SimpleGrid>
         </Box>
     )

@@ -88,46 +88,333 @@ interface DataComparisonModalProps {
     onConfigurationComplete?: (selectedDatasets: string[], dataElementGroups: any[]) => void
 }
 
-// Function to create automatic initial data element mappings based on name similarity
-const createAutomaticMapping = (datasetDetails: any[]): DataElementGroup[] => {
-    const groups: DataElementGroup[] = []
-    
-    // Get the maximum number of data elements across all datasets
-    const maxElements = Math.max(...datasetDetails.map(ds => ds.dataSetElements?.length || 0))
-    
-    // Create groups by position with automatic name matching
-    for (let position = 0; position < maxElements; position++) {
-        const group: DataElementGroup = {
-            id: `group_${groups.length + 1}`,
-            logicalName: `Data Element Group ${groups.length + 1}`,
-            elements: {}
+// Function to normalize text for better matching
+const normalizeForMatching = (text: string): string => {
+    return text.toLowerCase()
+        .replace(/[^\w\s]/g, ' ') // Replace punctuation with spaces
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+}
+
+// Function to extract key terms from data element names
+const extractKeyTerms = (name: string): string[] => {
+    const normalized = normalizeForMatching(name)
+    const commonWords = new Set(['total', 'number', 'of', 'in', 'the', 'and', 'or', 'for', 'from', 'to', 'with', 'by', 'at', 'on'])
+
+    return normalized.split(' ')
+        .filter(word => word.length > 2 && !commonWords.has(word))
+        .slice(0, 5) // Take up to 5 key terms
+}
+
+// Function to create logical group names from similar elements
+const createLogicalGroupName = (elements: any[]): string => {
+    if (elements.length === 0) return 'Unnamed Group'
+
+    // Extract all key terms from all element names
+    const allTerms: string[] = []
+    elements.forEach(element => {
+        if (element?.displayName) {
+            allTerms.push(...extractKeyTerms(element.displayName))
         }
-        
-        // Initialize all dataset slots to null
+    })
+
+    // Count term frequency
+    const termCounts = new Map<string, number>()
+    allTerms.forEach(term => {
+        termCounts.set(term, (termCounts.get(term) || 0) + 1)
+    })
+
+    // Get terms that appear in multiple elements (common terms)
+    const commonTerms = Array.from(termCounts.entries())
+        .filter(([, count]) => count > 1 || elements.length === 1)
+        .sort((a, b) => b[1] - a[1]) // Sort by frequency
+        .slice(0, 3) // Take top 3 common terms
+        .map(([term]) => term)
+
+    if (commonTerms.length > 0) {
+        // Capitalize and join common terms
+        const formatted = commonTerms
+            .map(term => term.charAt(0).toUpperCase() + term.slice(1))
+            .join(' ')
+        return formatted.length > 50 ? formatted.substring(0, 47) + '...' : formatted
+    }
+
+    // Fallback to first element name (truncated)
+    const firstName = elements[0]?.displayName || 'Unknown Element'
+    return firstName.length > 30 ? firstName.substring(0, 27) + '...' : firstName
+}
+
+// Function to create pre-configured logical groups based on common health data patterns
+const createPredefinedGroups = (allElements: any[], datasetDetails: any[]): DataElementGroup[] => {
+    const predefinedPatterns = [
+        {
+            name: 'Live Births',
+            patterns: ['live birth', 'births live', 'total live births', 'live births total'],
+            priority: 1
+        },
+        {
+            name: 'Still Births',
+            patterns: ['still birth', 'stillbirth', 'births still', 'total still births'],
+            priority: 1
+        },
+        {
+            name: 'Total Births',
+            patterns: ['total births', 'births total', 'all births'],
+            priority: 1
+        },
+        {
+            name: 'Maternal Deaths',
+            patterns: ['maternal death', 'maternal mortality', 'death maternal'],
+            priority: 2
+        },
+        {
+            name: 'Under 5 Deaths',
+            patterns: ['under 5 death', 'child death', 'under five death', 'deaths under 5'],
+            priority: 2
+        },
+        {
+            name: 'Antenatal Care 1st Visit',
+            patterns: ['anc 1st', 'anc first', 'antenatal 1st', 'antenatal first visit'],
+            priority: 3
+        },
+        {
+            name: 'Antenatal Care 4th Visit',
+            patterns: ['anc 4th', 'anc fourth', 'antenatal 4th', 'antenatal fourth visit'],
+            priority: 3
+        },
+        {
+            name: 'Skilled Birth Attendance',
+            patterns: ['skilled birth', 'skilled delivery', 'birth attendance', 'delivery skilled'],
+            priority: 3
+        },
+        {
+            name: 'OPD Attendance',
+            patterns: ['opd attendance', 'outpatient attendance', 'new attendance', 'total attendance'],
+            priority: 4
+        },
+        {
+            name: 'Malaria Cases',
+            patterns: ['malaria case', 'malaria total', 'malaria confirmed'],
+            priority: 4
+        },
+        {
+            name: 'TB Cases',
+            patterns: ['tb case', 'tuberculosis case', 'tb new', 'tuberculosis new'],
+            priority: 4
+        },
+        {
+            name: 'HIV Cases',
+            patterns: ['hiv case', 'hiv positive', 'hiv new'],
+            priority: 4
+        }
+    ]
+
+    const groups: DataElementGroup[] = []
+    const processedElements = new Set<string>()
+
+    // Process predefined patterns in priority order
+    predefinedPatterns.sort((a, b) => a.priority - b.priority)
+
+    for (const pattern of predefinedPatterns) {
+        const matchingElements: { [datasetId: string]: any } = {}
+
+        // Find elements matching this pattern across all datasets
         datasetDetails.forEach(dataset => {
-            group.elements[dataset.id] = null
+            let bestMatch: any = null
+            let bestScore = 0
+
+            dataset.dataSetElements?.forEach((element: any) => {
+                if (processedElements.has(element.dataElement.id)) return
+
+                const elementName = normalizeForMatching(element.dataElement.displayName)
+
+                // Calculate match score for this pattern
+                let matchScore = 0
+                for (const patternText of pattern.patterns) {
+                    if (elementName.includes(patternText)) {
+                        matchScore = patternText.length // Longer patterns get higher scores
+                        break
+                    }
+
+                    // Check for partial matches
+                    const patternWords = patternText.split(' ')
+                    const elementWords = elementName.split(' ')
+                    const wordMatches = patternWords.filter(word =>
+                        elementWords.some(elementWord =>
+                            elementWord.includes(word) || word.includes(elementWord)
+                        )
+                    ).length
+
+                    if (wordMatches >= Math.min(2, patternWords.length)) {
+                        matchScore = Math.max(matchScore, wordMatches)
+                    }
+                }
+
+                if (matchScore > bestScore) {
+                    bestMatch = element.dataElement
+                    bestScore = matchScore
+                }
+            })
+
+            if (bestMatch && bestScore > 0) {
+                matchingElements[dataset.id] = {
+                    id: bestMatch.id,
+                    displayName: bestMatch.displayName,
+                    datasetId: dataset.id,
+                    datasetName: dataset.displayName
+                }
+                processedElements.add(bestMatch.id)
+            }
         })
-        
-        // Try to match elements by position and similarity
-        datasetDetails.forEach(dataset => {
-            const element = dataset.dataSetElements?.[position]
-            if (element) {
-                group.elements[dataset.id] = {
-                    id: element.dataElement.id,
-                    displayName: element.dataElement.displayName,
+
+        // Create group if we have matches in at least 2 datasets
+        if (Object.keys(matchingElements).length >= 2) {
+            const group: DataElementGroup = {
+                id: `predefined_${groups.length + 1}`,
+                logicalName: pattern.name,
+                elements: {}
+            }
+
+            // Initialize all dataset slots
+            datasetDetails.forEach(dataset => {
+                group.elements[dataset.id] = matchingElements[dataset.id] || null
+            })
+
+            groups.push(group)
+            console.log(`[createPredefinedGroups] Created predefined group: ${pattern.name} with ${Object.keys(matchingElements).length} matches`)
+        }
+    }
+
+    return groups
+}
+
+// Function to create automatic initial data element mappings based on name similarity
+const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: string): DataElementGroup[] => {
+    console.log('[createAutomaticMapping] Starting with', datasetDetails.length, 'datasets')
+
+    const groups: DataElementGroup[] = []
+
+    // Parse the data element mapping to get mapped elements (if provided)
+    const parsedMapping: Record<string, string> = {}
+    if (dataElementMapping && dataElementMapping.trim()) {
+        try {
+            const pairs = dataElementMapping.split(',').map(s => s.trim()).filter(Boolean)
+            for (const pair of pairs) {
+                const [source, dest] = pair.split(':').map(s => s.trim())
+                if (source && dest) {
+                    parsedMapping[source] = dest
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to parse data element mapping:', e)
+        }
+    }
+
+    const mappedSourceIds = Object.keys(parsedMapping)
+    console.log('[createAutomaticMapping] Mapped source IDs:', mappedSourceIds)
+
+    // If we have specific mappings, filter by them, otherwise use all elements
+    const filteredDatasetDetails = mappedSourceIds.length > 0
+        ? datasetDetails.map(dataset => ({
+            ...dataset,
+            dataSetElements: dataset.dataSetElements?.filter((element: any) =>
+                mappedSourceIds.includes(element.dataElement.id)
+            ) || []
+        }))
+        : datasetDetails
+
+    console.log('[createAutomaticMapping] Filtered elements:', filteredDatasetDetails.map(ds => ({
+        dataset: ds.displayName,
+        elements: ds.dataSetElements?.length || 0
+    })))
+
+    // Get all available data elements from all datasets
+    const allElements: any[] = []
+    filteredDatasetDetails.forEach(dataset => {
+        dataset.dataSetElements?.forEach((element: any) => {
+            allElements.push({
+                ...element.dataElement,
+                datasetId: dataset.id,
+                datasetName: dataset.displayName
+            })
+        })
+    })
+
+    console.log('[createAutomaticMapping] Total elements to process:', allElements.length)
+
+    // First, try to create predefined logical groups
+    const predefinedGroups = createPredefinedGroups(allElements, filteredDatasetDetails)
+    groups.push(...predefinedGroups)
+
+    // Track elements that have been used in predefined groups
+    const processedElements = new Set<string>()
+    predefinedGroups.forEach(group => {
+        Object.values(group.elements).forEach(element => {
+            if (element) processedElements.add(element.id)
+        })
+    })
+
+    // Then create similarity-based groups for remaining elements
+    const remainingElements = allElements.filter(el => !processedElements.has(el.id))
+    console.log('[createAutomaticMapping] Remaining elements for similarity matching:', remainingElements.length)
+
+    for (const baseElement of remainingElements) {
+        if (processedElements.has(baseElement.id)) continue
+
+        const similarElements: { [datasetId: string]: any } = {}
+
+        // Find best matching elements across all datasets
+        filteredDatasetDetails.forEach(dataset => {
+            let bestMatch: any = null
+            let bestSimilarity = 0
+
+            dataset.dataSetElements?.forEach((element: any) => {
+                if (processedElements.has(element.dataElement.id)) return
+
+                const similarity = calculateAdvancedSimilarity(baseElement.displayName, element.dataElement.displayName)
+                if (similarity > bestSimilarity && similarity >= 0.6) { // Lowered threshold for more matches
+                    bestMatch = element.dataElement
+                    bestSimilarity = similarity
+                }
+            })
+
+            if (bestMatch) {
+                similarElements[dataset.id] = {
+                    id: bestMatch.id,
+                    displayName: bestMatch.displayName,
                     datasetId: dataset.id,
                     datasetName: dataset.displayName
                 }
             }
         })
-        
-        // Only add group if at least one element exists
-        const hasElements = Object.values(group.elements).some(el => el !== null)
-        if (hasElements) {
+
+        // Only create group if at least 2 elements match (for comparison)
+        if (Object.keys(similarElements).length >= 2) {
+            const group: DataElementGroup = {
+                id: `similarity_${groups.length + 1}`,
+                logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
+                elements: {}
+            }
+
+            // Initialize all dataset slots
+            filteredDatasetDetails.forEach(dataset => {
+                group.elements[dataset.id] = similarElements[dataset.id] || null
+            })
+
             groups.push(group)
+
+            // Mark elements as processed
+            Object.values(similarElements).forEach(element => {
+                if (element) processedElements.add(element.id)
+            })
         }
+
+        processedElements.add(baseElement.id)
     }
-    
+
+    console.log('[createAutomaticMapping] Final groups created:', groups.length,
+                '(', predefinedGroups.length, 'predefined,', groups.length - predefinedGroups.length, 'similarity-based )')
+
     return groups
 }
 
@@ -144,6 +431,111 @@ const calculateNameSimilarity = (name1: string, name2: string): number => {
     })
     
     return commonWords / Math.max(words1.length, words2.length)
+}
+
+// Advanced similarity calculation for better matching
+const calculateAdvancedSimilarity = (name1: string, name2: string): number => {
+    if (name1 === name2) return 1.0 // Exact match
+    
+    const clean1 = name1.toLowerCase().trim()
+    const clean2 = name2.toLowerCase().trim()
+    
+    if (clean1 === clean2) return 1.0 // Case-insensitive exact match
+    
+    // Check for substring matches
+    if (clean1.includes(clean2) || clean2.includes(clean1)) return 0.9
+    
+    // Split into words and calculate word-based similarity
+    const words1 = clean1.split(/\s+/).filter(w => w.length > 2) // Ignore short words
+    const words2 = clean2.split(/\s+/).filter(w => w.length > 2)
+    
+    if (words1.length === 0 || words2.length === 0) return 0
+    
+    // Count exact word matches
+    let exactMatches = 0
+    let partialMatches = 0
+    
+    words1.forEach(word1 => {
+        words2.forEach(word2 => {
+            if (word1 === word2) {
+                exactMatches++
+            } else if (word1.length > 3 && word2.length > 3) {
+                // Check for partial matches (one contains the other)
+                if (word1.includes(word2) || word2.includes(word1)) {
+                    partialMatches += 0.5
+                }
+            }
+        })
+    })
+    
+    const totalWords = Math.max(words1.length, words2.length)
+    const similarity = (exactMatches + partialMatches) / totalWords
+    
+    return Math.min(similarity, 1.0) // Cap at 1.0
+}
+
+// Helper function to get dataset display name from multiple sources
+const getDatasetDisplayName = (
+    datasetId: string,
+    datasetDetails: any[],
+    availableDatasets: Dataset[],
+    datasetsToShow: Dataset[],
+    dataElementGroups: DataElementGroup[]
+): string => {
+    console.log(`[getDatasetDisplayName] Looking for dataset name for ID: ${datasetId}`)
+
+    // First try to find in datasetDetails (most reliable source)
+    const dataset = datasetDetails.find(ds => ds.id === datasetId)
+    if (dataset?.displayName && dataset.displayName !== datasetId) {
+        console.log(`[getDatasetDisplayName] Found in datasetDetails: ${dataset.displayName}`)
+        return dataset.displayName
+    }
+
+    // Try to find in availableDatasets (from DHIS2 API)
+    const availableDataset = availableDatasets.find(ds => ds.id === datasetId)
+    if (availableDataset?.displayName && availableDataset.displayName !== datasetId) {
+        console.log(`[getDatasetDisplayName] Found in availableDatasets: ${availableDataset.displayName}`)
+        return availableDataset.displayName
+    }
+
+    // Try to find in datasetsToShow (for Quick Run scenarios)
+    const shownDataset = datasetsToShow.find(ds => ds.id === datasetId)
+    if (shownDataset?.displayName && shownDataset.displayName !== datasetId) {
+        console.log(`[getDatasetDisplayName] Found in datasetsToShow: ${shownDataset.displayName}`)
+        return shownDataset.displayName
+    }
+
+    // Try to find in data element groups (extract from first mapped element)
+    if (dataElementGroups.length > 0) {
+        for (const group of dataElementGroups) {
+            const element = group.elements[datasetId]
+            if (element?.datasetName && element.datasetName !== datasetId && element.datasetName !== element.id) {
+                console.log(`[getDatasetDisplayName] Found in dataElementGroups: ${element.datasetName}`)
+                return element.datasetName
+            }
+        }
+    }
+
+    // Generate a meaningful fallback name based on common dataset patterns
+    const generateMeaningfulName = (id: string): string => {
+        if (id.toLowerCase().includes('hmis')) return 'HMIS Monthly Report'
+        if (id.toLowerCase().includes('monthly')) return 'Monthly Reporting Dataset'
+        if (id.toLowerCase().includes('quarterly')) return 'Quarterly Reporting Dataset'
+        if (id.toLowerCase().includes('annual')) return 'Annual Reporting Dataset'
+        if (id.toLowerCase().includes('maternal')) return 'Maternal Health Dataset'
+        if (id.toLowerCase().includes('child')) return 'Child Health Dataset'
+        if (id.toLowerCase().includes('malaria')) return 'Malaria Program Dataset'
+        if (id.toLowerCase().includes('tb')) return 'TB Program Dataset'
+        if (id.toLowerCase().includes('hiv')) return 'HIV Program Dataset'
+        if (id.toLowerCase().includes('immunization')) return 'Immunization Dataset'
+        if (id.toLowerCase().includes('nutrition')) return 'Nutrition Dataset'
+        if (id.toLowerCase().includes('population')) return 'Population Dataset'
+        return `Dataset ${id.substring(0, 8)}...` // Truncated ID as last resort
+    }
+
+    const meaningfulName = generateMeaningfulName(datasetId)
+    console.log(`[getDatasetDisplayName] Generated meaningful name: ${meaningfulName}`)
+    return meaningfulName
 }
 
 // Function to get available data elements for a specific dataset
@@ -237,25 +629,38 @@ const fetchAvailableDatasets = async (
     destinationUser: string,
     destinationPass: string
 ): Promise<Dataset[]> => {
-    // Use the existing backend API endpoint that handles DHIS2 authentication
-    const response = await fetch(`${getApiBaseUrl()}/api/get-datasets`, {
-        method: 'POST',
-        headers: { 
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            sourceUrl: destinationUrl,
-            sourceUser: destinationUser,
-            sourcePass: destinationPass
+    console.log('[DataComparisonModal] Fetching datasets from:', destinationUrl)
+    console.log('[DataComparisonModal] Using API base URL:', getApiBaseUrl())
+    
+    try {
+        // Use the existing backend API endpoint that handles DHIS2 authentication
+        const response = await fetch(`${getApiBaseUrl()}/api/get-datasets`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                sourceUrl: destinationUrl,
+                sourceUser: destinationUser,
+                sourcePass: destinationPass
+            })
         })
-    })
 
-    if (!response.ok) {
-        throw new Error(`Failed to fetch datasets: ${response.status}`)
+        console.log('[DataComparisonModal] Response status:', response.status)
+
+        if (!response.ok) {
+            const errorText = await response.text()
+            console.error('[DataComparisonModal] Error response:', errorText)
+            throw new Error(`Failed to fetch datasets: ${response.status} - ${errorText}`)
+        }
+
+        const data = await response.json()
+        console.log('[DataComparisonModal] Received datasets:', data.dataSets?.length || 0)
+        return data.dataSets || []
+    } catch (error) {
+        console.error('[DataComparisonModal] Fetch error:', error)
+        throw error
     }
-
-    const data = await response.json()
-    return data.dataSets || []
 }
 
 // API function to perform dataset comparison
@@ -632,8 +1037,22 @@ export default function DataComparisonModal({
     // Query to fetch available datasets (skip for Quick Run to avoid server errors)
     const { data: availableDatasets = [], isLoading: loadingDatasets, error: datasetsError } = useQuery({
         queryKey: ['available-datasets', destinationUrl, destinationUser],
-        queryFn: () => fetchAvailableDatasets(destinationUrl, destinationUser, destinationPass),
-        enabled: isOpen && !isQuickRun, // Skip fetching for Quick Run
+        queryFn: () => {
+            console.log('[DataComparisonModal] Query enabled, fetching datasets with:', {
+                destinationUrl,
+                destinationUser: destinationUser ? '***' : '(empty)',
+                destinationPass: destinationPass ? '***' : '(empty)',
+                isOpen,
+                isQuickRun
+            })
+            
+            if (!destinationUrl || !destinationUser || !destinationPass) {
+                throw new Error('Missing required destination credentials')
+            }
+            
+            return fetchAvailableDatasets(destinationUrl, destinationUser, destinationPass)
+        },
+        enabled: isOpen && !isQuickRun && Boolean(destinationUrl && destinationUser && destinationPass), // Only fetch when we have all required params
         staleTime: 5 * 60 * 1000,
     })
 
@@ -856,12 +1275,12 @@ export default function DataComparisonModal({
         }
     }, [selectedDatasets, showMappingInterface, isQuickRun])
     
-    // Show save modal when user reaches Step 2: Map data elements (skip for Quick Run)
-    useEffect(() => {
-        if (!isQuickRun && showMappingInterface && dataElementGroups.length > 0 && !showStep2SaveModal) {
-            setShowStep2SaveModal(true)
-        }
-    }, [showMappingInterface, dataElementGroups.length, isQuickRun])
+    // Note: Automatic save modal trigger disabled - only show when user clicks "Save Config" button
+    // useEffect(() => {
+    //     if (!isQuickRun && showMappingInterface && dataElementGroups.length > 0 && !showStep2SaveModal) {
+    //         setShowStep2SaveModal(true)
+    //     }
+    // }, [showMappingInterface, dataElementGroups.length, isQuickRun])
     
     const fetchDatasetDetailsAndCreateMapping = async () => {
         try {
@@ -896,7 +1315,7 @@ export default function DataComparisonModal({
             setDatasetDetails(details)
             
             // Create automatic mapping
-            const autoGroups = createAutomaticMapping(details)
+            const autoGroups = createAutomaticMapping(details, dataElementMapping)
             setDataElementGroups(autoGroups)
             
             // Collect all available data elements
@@ -1017,7 +1436,7 @@ export default function DataComparisonModal({
     
     const regenerateAutoMapping = () => {
         if (datasetDetails.length > 0) {
-            const autoGroups = createAutomaticMapping(datasetDetails)
+            const autoGroups = createAutomaticMapping(datasetDetails, dataElementMapping)
             setDataElementGroups(autoGroups)
             toast({
                 title: 'Mapping Regenerated',
@@ -1176,7 +1595,17 @@ export default function DataComparisonModal({
                                             </VStack>
                                         </Alert>
                                         
-                                        {loadingDatasets ? (
+                                        {!destinationUrl || !destinationUser || !destinationPass ? (
+                                            <Alert status="warning">
+                                                <AlertIcon />
+                                                <VStack align="start" spacing={1}>
+                                                    <Text fontSize="sm" fontWeight="medium">Missing destination system credentials</Text>
+                                                    <Text fontSize="xs" color="gray.600">
+                                                        Please configure destination URL, username, and password in the main DQ Engine form first.
+                                                    </Text>
+                                                </VStack>
+                                            </Alert>
+                                        ) : loadingDatasets ? (
                                             <Flex alignItems="center" justifyContent="center" py={8}>
                                                 <VStack spacing={3}>
                                                     <Spinner size="lg" color="blue.500" />
@@ -1302,10 +1731,17 @@ export default function DataComparisonModal({
                                             </HStack>
                                         </HStack>
                                         
-                                        <Text fontSize="sm" color="gray.600">
-                                            Click "Add Group" then select corresponding data elements from each dataset using the dropdowns below. 
-                                            Each row represents one logical data element that will be compared across datasets.
-                                        </Text>
+                                        <Alert status="info" borderRadius="md" mb={4}>
+                                            <AlertIcon />
+                                            <VStack align="start" spacing={1}>
+                                                <Text fontSize="sm" fontWeight="medium">Intelligent Data Element Mapping</Text>
+                                                <Text fontSize="xs" color="gray.600">
+                                                    The system automatically creates logical groups by matching data elements with similar names across datasets.
+                                                    Common health indicators like "Live Births", "Maternal Deaths", and "Antenatal Care" are pre-configured.
+                                                    You can modify these groups or add new ones manually.
+                                                </Text>
+                                            </VStack>
+                                        </Alert>
 
                                         {dataElementGroups.length > 0 ? (
                                             <VStack spacing={4} align="stretch">
@@ -1315,11 +1751,18 @@ export default function DataComparisonModal({
                                                         <Text fontWeight="bold" fontSize="sm">Group Name</Text>
                                                     </Box>
                                                     {selectedDatasets.slice(0, 3).map((datasetId, index) => {
-                                                        const dataset = datasetDetails.find(ds => ds.id === datasetId)
+                                                        const datasetName = getDatasetDisplayName(
+                                                            datasetId,
+                                                            datasetDetails,
+                                                            availableDatasets,
+                                                            datasetsToShow,
+                                                            dataElementGroups
+                                                        )
+                                                        
                                                         return (
                                                             <Box key={datasetId} flex="1" minW="200px">
                                                                 <Text fontWeight="bold" fontSize="sm" color="blue.600">
-                                                                    Dataset {index + 1}: {dataset?.displayName || datasetId}
+                                                                    Dataset {index + 1}: {datasetName}
                                                                 </Text>
                                                             </Box>
                                                         )
@@ -1781,7 +2224,8 @@ export default function DataComparisonModal({
                 </ModalContent>
             </Modal>
             
-            {/* Step 2 Save Configuration Modal - Automatically triggered */}
+            {/* Step 2 Save Configuration Modal - DISABLED (use main Save Config button instead) */}
+            {/*
             <Modal isOpen={showStep2SaveModal} onClose={() => setShowStep2SaveModal(false)} size="md">
                 <ModalOverlay />
                 <ModalContent>
@@ -1864,6 +2308,7 @@ export default function DataComparisonModal({
                     </Box>
                 </ModalContent>
             </Modal>
+            */}
             
             {/* Load Configuration Modal */}
             <Modal isOpen={showLoadConfig} onClose={() => setShowLoadConfig(false)} size="lg">
