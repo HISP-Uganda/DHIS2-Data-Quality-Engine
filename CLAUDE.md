@@ -2,6 +2,34 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Recent Improvements (2025-10-14)
+
+✅ **Phase 1 Improvements Complete:**
+- Replaced in-memory storage with SQLite database
+- Implemented AES-256-GCM encryption for credentials
+- Added health check endpoint (`/api/health`)
+- Added graceful shutdown handling
+- See [IMPROVEMENTS_SUMMARY.md](IMPROVEMENTS_SUMMARY.md) for details
+- See [dq-engine/UPGRADE_NOTES.md](dq-engine/UPGRADE_NOTES.md) for technical details
+
+✅ **Phase 2 Improvements Complete & Integrated:**
+- DHIS2-style Period Selector with visual month/quarter/year selection **[LIVE IN UI]**
+- Intelligent data element auto-mapping using multiple similarity algorithms **[LIVE IN UI]**
+- Advanced validation rules engine (range, consistency, outlier, mandatory)
+- Comprehensive audit logging system with compliance export
+- See [PHASE2_FINAL_SUMMARY.md](PHASE2_FINAL_SUMMARY.md) for complete details
+
+**Integrated Components:**
+- `src/components/PeriodSelector.tsx` - Visual period picker (now in Source System form)
+- `src/components/AutoMappingButton.tsx` - One-click intelligent mapping (now in Destination form)
+- `src/utils/dataElementMapping.ts` - Smart similarity algorithms (powers Auto-Map button)
+- `dq-engine/src/validation/rulesEngine.ts` - Advanced validation rules
+- `dq-engine/src/utils/auditLog.ts` - Audit logging system
+
+**Where to Find in UI:**
+- Source System Details → Period field now uses visual selector
+- Destination System Details → "Auto-Map" button next to Data Element Mapping label
+
 ## Development Commands
 
 ### Frontend (React App)

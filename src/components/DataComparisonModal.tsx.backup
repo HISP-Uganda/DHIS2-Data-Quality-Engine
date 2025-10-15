@@ -288,28 +288,13 @@ const createPredefinedGroups = (allElements: any[], datasetDetails: any[]): Data
     return groups
 }
 
-// Function to create automatic initial data element mappings based on the user's selected mappings from DQ form
-const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: string, selectedDataElements: string[]): DataElementGroup[] => {
+// Function to create automatic initial data element mappings based on name similarity
+const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: string): DataElementGroup[] => {
     console.log('[createAutomaticMapping] Starting with', datasetDetails.length, 'datasets')
-    console.log('[createAutomaticMapping] Selected data elements:', selectedDataElements)
-    console.log('[createAutomaticMapping] Data element mapping:', dataElementMapping)
 
     const groups: DataElementGroup[] = []
 
-    // Build a map of all available data elements across all datasets
-    const allDataElements = new Map<string, any>()
-    datasetDetails.forEach(dataset => {
-        dataset.dataSetElements?.forEach((element: any) => {
-            allDataElements.set(element.dataElement.id, {
-                id: element.dataElement.id,
-                displayName: element.dataElement.displayName,
-                datasetId: dataset.id,
-                datasetName: dataset.displayName
-            })
-        })
-    })
-
-    // Parse the data element mapping to get source->destination pairs
+    // Parse the data element mapping to get mapped elements (if provided)
     const parsedMapping: Record<string, string> = {}
     if (dataElementMapping && dataElementMapping.trim()) {
         try {
@@ -325,149 +310,27 @@ const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: strin
         }
     }
 
-    console.log('[createAutomaticMapping] Parsed', Object.keys(parsedMapping).length, 'explicit mappings')
+    const mappedSourceIds = Object.keys(parsedMapping)
+    console.log('[createAutomaticMapping] Mapped source IDs:', mappedSourceIds)
 
-    // Strategy 1: If we have explicit mappings, create ONE GROUP PER MAPPED PAIR
-    if (Object.keys(parsedMapping).length > 0) {
-        console.log('[createAutomaticMapping] Creating groups from explicit mappings...')
+    // If we have specific mappings, filter by them, otherwise use all elements
+    const filteredDatasetDetails = mappedSourceIds.length > 0
+        ? datasetDetails.map(dataset => ({
+            ...dataset,
+            dataSetElements: dataset.dataSetElements?.filter((element: any) =>
+                mappedSourceIds.includes(element.dataElement.id)
+            ) || []
+        }))
+        : datasetDetails
 
-        const processedElements = new Set<string>()
-        let groupIndex = 0
+    console.log('[createAutomaticMapping] Filtered elements:', filteredDatasetDetails.map(ds => ({
+        dataset: ds.displayName,
+        elements: ds.dataSetElements?.length || 0
+    })))
 
-        Object.entries(parsedMapping).forEach(([sourceId, destId]) => {
-            const sourceElement = allDataElements.get(sourceId)
-            const destElement = allDataElements.get(destId)
-
-            if (!sourceElement && !destElement) {
-                console.warn('[createAutomaticMapping] Could not find elements for mapping:', sourceId, '->', destId)
-                return
-            }
-
-            // Use whichever element we found as reference
-            const referenceElement = sourceElement || destElement
-            const referenceElementName = referenceElement.displayName
-
-            console.log('[createAutomaticMapping] Finding similar elements for:', referenceElementName)
-
-            const similarElements: { [datasetId: string]: any } = {}
-
-            // Find similar elements across all datasets
-            datasetDetails.forEach(dataset => {
-                let bestMatch: any = null
-                let bestSimilarity = 0
-
-                dataset.dataSetElements?.forEach((element: any) => {
-                    if (processedElements.has(element.dataElement.id)) return
-
-                    const similarity = calculateAdvancedSimilarity(referenceElementName, element.dataElement.displayName)
-                    if (similarity > bestSimilarity && similarity >= 0.4) { // Lower threshold
-                        bestMatch = element.dataElement
-                        bestSimilarity = similarity
-                    }
-                })
-
-                if (bestMatch) {
-                    similarElements[dataset.id] = {
-                        id: bestMatch.id,
-                        displayName: bestMatch.displayName,
-                        datasetId: dataset.id,
-                        datasetName: dataset.displayName
-                    }
-                    processedElements.add(bestMatch.id)
-                }
-            })
-
-            // Create group if we found matches in at least 1 dataset (not 2, to be more permissive)
-            if (Object.keys(similarElements).length >= 1) {
-                groupIndex++
-                const group: DataElementGroup = {
-                    id: `mapped_${groupIndex}`,
-                    logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
-                    elements: {}
-                }
-
-                // Initialize all dataset slots
-                datasetDetails.forEach(dataset => {
-                    group.elements[dataset.id] = similarElements[dataset.id] || null
-                })
-
-                groups.push(group)
-                console.log('[createAutomaticMapping] Created group:', group.logicalName, 'with', Object.keys(similarElements).length, 'elements')
-            }
-        })
-
-        console.log('[createAutomaticMapping] Created', groups.length, 'groups from', Object.keys(parsedMapping).length, 'explicit mappings')
-        return groups
-    }
-
-    // Strategy 2: Use selected data elements if available
-    if (selectedDataElements && selectedDataElements.length > 0) {
-        console.log('[createAutomaticMapping] Creating groups from', selectedDataElements.length, 'selected elements')
-
-        const processedElements = new Set<string>()
-        let groupIndex = 0
-
-        selectedDataElements.forEach(selectedId => {
-            const referenceElement = allDataElements.get(selectedId)
-            if (!referenceElement) {
-                console.warn('[createAutomaticMapping] Could not find element:', selectedId)
-                return
-            }
-
-            const referenceElementName = referenceElement.displayName
-            const similarElements: { [datasetId: string]: any } = {}
-
-            // Find similar elements across all datasets
-            datasetDetails.forEach(dataset => {
-                let bestMatch: any = null
-                let bestSimilarity = 0
-
-                dataset.dataSetElements?.forEach((element: any) => {
-                    if (processedElements.has(element.dataElement.id)) return
-
-                    const similarity = calculateAdvancedSimilarity(referenceElementName, element.dataElement.displayName)
-                    if (similarity > bestSimilarity && similarity >= 0.4) {
-                        bestMatch = element.dataElement
-                        bestSimilarity = similarity
-                    }
-                })
-
-                if (bestMatch) {
-                    similarElements[dataset.id] = {
-                        id: bestMatch.id,
-                        displayName: bestMatch.displayName,
-                        datasetId: dataset.id,
-                        datasetName: dataset.displayName
-                    }
-                    processedElements.add(bestMatch.id)
-                }
-            })
-
-            if (Object.keys(similarElements).length >= 1) {
-                groupIndex++
-                const group: DataElementGroup = {
-                    id: `selected_${groupIndex}`,
-                    logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
-                    elements: {}
-                }
-
-                datasetDetails.forEach(dataset => {
-                    group.elements[dataset.id] = similarElements[dataset.id] || null
-                })
-
-                groups.push(group)
-            }
-        })
-
-        console.log('[createAutomaticMapping] Created', groups.length, 'groups from selected elements')
-        return groups
-    }
-
-    // Strategy 3: Fallback - use predefined patterns
-    console.log('[createAutomaticMapping] No mappings or selections, using predefined patterns')
-
+    // Get all available data elements from all datasets
     const allElements: any[] = []
-    datasetDetails.forEach(dataset => {
+    filteredDatasetDetails.forEach(dataset => {
         dataset.dataSetElements?.forEach((element: any) => {
             allElements.push({
                 ...element.dataElement,
@@ -477,10 +340,81 @@ const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: strin
         })
     })
 
-    const predefinedGroups = createPredefinedGroups(allElements, datasetDetails)
+    console.log('[createAutomaticMapping] Total elements to process:', allElements.length)
+
+    // First, try to create predefined logical groups
+    const predefinedGroups = createPredefinedGroups(allElements, filteredDatasetDetails)
     groups.push(...predefinedGroups)
 
-    console.log('[createAutomaticMapping] Created', groups.length, 'predefined groups')
+    // Track elements that have been used in predefined groups
+    const processedElements = new Set<string>()
+    predefinedGroups.forEach(group => {
+        Object.values(group.elements).forEach(element => {
+            if (element) processedElements.add(element.id)
+        })
+    })
+
+    // Then create similarity-based groups for remaining elements
+    const remainingElements = allElements.filter(el => !processedElements.has(el.id))
+    console.log('[createAutomaticMapping] Remaining elements for similarity matching:', remainingElements.length)
+
+    for (const baseElement of remainingElements) {
+        if (processedElements.has(baseElement.id)) continue
+
+        const similarElements: { [datasetId: string]: any } = {}
+
+        // Find best matching elements across all datasets
+        filteredDatasetDetails.forEach(dataset => {
+            let bestMatch: any = null
+            let bestSimilarity = 0
+
+            dataset.dataSetElements?.forEach((element: any) => {
+                if (processedElements.has(element.dataElement.id)) return
+
+                const similarity = calculateAdvancedSimilarity(baseElement.displayName, element.dataElement.displayName)
+                if (similarity > bestSimilarity && similarity >= 0.6) { // Lowered threshold for more matches
+                    bestMatch = element.dataElement
+                    bestSimilarity = similarity
+                }
+            })
+
+            if (bestMatch) {
+                similarElements[dataset.id] = {
+                    id: bestMatch.id,
+                    displayName: bestMatch.displayName,
+                    datasetId: dataset.id,
+                    datasetName: dataset.displayName
+                }
+            }
+        })
+
+        // Only create group if at least 2 elements match (for comparison)
+        if (Object.keys(similarElements).length >= 2) {
+            const group: DataElementGroup = {
+                id: `similarity_${groups.length + 1}`,
+                logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
+                elements: {}
+            }
+
+            // Initialize all dataset slots
+            filteredDatasetDetails.forEach(dataset => {
+                group.elements[dataset.id] = similarElements[dataset.id] || null
+            })
+
+            groups.push(group)
+
+            // Mark elements as processed
+            Object.values(similarElements).forEach(element => {
+                if (element) processedElements.add(element.id)
+            })
+        }
+
+        processedElements.add(baseElement.id)
+    }
+
+    console.log('[createAutomaticMapping] Final groups created:', groups.length,
+                '(', predefinedGroups.length, 'predefined,', groups.length - predefinedGroups.length, 'similarity-based )')
+
     return groups
 }
 
@@ -735,7 +669,6 @@ const performDatasetComparison = async (
     destinationUser: string,
     destinationPass: string,
     orgUnit: string,
-    orgUnitName: string,
     period: string,
     selectedDatasetIds: string[],
     dataElementGroups: DataElementGroup[],
@@ -901,12 +834,14 @@ const performDatasetComparison = async (
     }
     
     onProgress('Comparing data element values across datasets...', 80)
-
+    
     // Use user-defined data element mappings
     const comparisonResults: ComparisonResult[] = []
-
-    // orgUnitName is now passed as parameter
-
+    
+    // Get org unit name - using ID for now to avoid direct API calls
+    // In a production environment, you could enhance the backend API to include org unit names
+    const orgUnitName = orgUnit
+    
     onProgress('Analyzing data element value differences...', 90)
     
     // Process each user-defined data element group
@@ -1132,18 +1067,11 @@ export default function DataComparisonModal({
     // Mutation for performing comparison
     const comparisonMutation = useMutation({
         mutationFn: async (datasetIds: string[]) => {
-            // Get org unit name from selectedDestOrgNames based on destinationOrgUnit ID
-            const orgUnitIndex = selectedDestOrgUnits.findIndex(id => id === destinationOrgUnit)
-            const orgUnitName = orgUnitIndex >= 0 && selectedDestOrgNames[orgUnitIndex]
-                ? selectedDestOrgNames[orgUnitIndex]
-                : destinationOrgUnit // Fallback to ID if name not found
-
             return performDatasetComparison(
                 destinationUrl,
                 destinationUser,
                 destinationPass,
                 destinationOrgUnit,
-                orgUnitName,
                 period,
                 datasetIds,
                 dataElementGroups,
@@ -1387,7 +1315,7 @@ export default function DataComparisonModal({
             setDatasetDetails(details)
 
             // Create automatic mapping
-            const autoGroups = createAutomaticMapping(details, dataElementMapping, selectedDataElements)
+            const autoGroups = createAutomaticMapping(details, dataElementMapping)
             setDataElementGroups(autoGroups)
 
             // Show success notification about automatic mapping
@@ -1528,22 +1456,16 @@ export default function DataComparisonModal({
     const regenerateAutoMapping = () => {
         if (datasetDetails.length > 0) {
             const prevGroupCount = dataElementGroups.length
-            const autoGroups = createAutomaticMapping(datasetDetails, dataElementMapping, selectedDataElements)
+            const autoGroups = createAutomaticMapping(datasetDetails, dataElementMapping)
             setDataElementGroups(autoGroups)
 
-            // Count mapped vs selected vs predefined groups
-            const mappedCount = autoGroups.filter(g => g.id.startsWith('mapped_')).length
-            const selectedCount = autoGroups.filter(g => g.id.startsWith('selected_')).length
+            // Count predefined vs similarity-based groups
             const predefinedCount = autoGroups.filter(g => g.id.startsWith('predefined_')).length
-
-            const descParts = []
-            if (mappedCount > 0) descParts.push(`${mappedCount} from mappings`)
-            if (selectedCount > 0) descParts.push(`${selectedCount} from selections`)
-            if (predefinedCount > 0) descParts.push(`${predefinedCount} predefined`)
+            const similarityCount = autoGroups.filter(g => g.id.startsWith('similarity_')).length
 
             toast({
                 title: '✨ Auto-Mapping Regenerated!',
-                description: `Created ${autoGroups.length} groups${descParts.length > 0 ? ` (${descParts.join(', ')})` : ''}. ${prevGroupCount > 0 ? `Previous ${prevGroupCount} groups replaced.` : ''}`,
+                description: `Created ${autoGroups.length} groups (${predefinedCount} predefined patterns, ${similarityCount} similarity-based). ${prevGroupCount > 0 ? `Previous ${prevGroupCount} groups replaced.` : ''}`,
                 status: 'success',
                 duration: 5000,
                 isClosable: true

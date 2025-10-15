@@ -159,17 +159,32 @@ export interface OrgUnitTreeNode {
     children: OrgUnitTreeNode[]
 }
 
+export async function validateAuth(sourceUrl: string, sourceUser: string, sourcePass: string): Promise<{ success: boolean; user?: any }> {
+    const resp = await fetch('http://localhost:4000/api/validate-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceUrl, sourceUser, sourcePass }),
+    })
+
+    if (!resp.ok) {
+        const error = await resp.json().catch(() => ({ error: 'Authentication failed' }))
+        throw new Error(error.error || `Authentication failed: ${resp.status}`)
+    }
+
+    return await resp.json()
+}
+
 export async function fetchDatasets(sourceUrl: string, sourceUser: string, sourcePass: string): Promise<DHIS2Dataset[]> {
     const resp = await fetch('http://localhost:4000/api/get-datasets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceUrl, sourceUser, sourcePass }),
     })
-    
+
     if (!resp.ok) {
         throw new Error(`Failed to fetch datasets: ${resp.status}`)
     }
-    
+
     const data = await resp.json()
     return data.dataSets || []
 }

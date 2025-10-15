@@ -1,148 +1,310 @@
-import fs from 'fs'
-import path from 'path'
+import { getDb } from './db/connection'
+import { encrypt, decrypt, ensureEncrypted } from './utils/encryption'
 import { ComparisonConfiguration, SavedConfigurationSummary } from './types'
-
-const CONFIG_DIR = path.join(__dirname, '..', 'data', 'comparison-configs')
-const CONFIG_FILE = path.join(CONFIG_DIR, 'configurations.json')
-
-function ensureConfigDir() {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true })
-  }
-}
-
-function loadConfigurations(): ComparisonConfiguration[] {
-  ensureConfigDir()
-
-  if (!fs.existsSync(CONFIG_FILE)) {
-    return []
-  }
-
-  try {
-    const data = fs.readFileSync(CONFIG_FILE, 'utf8')
-    return JSON.parse(data) as ComparisonConfiguration[]
-  } catch (error) {
-    console.error('[ConfigStorage] Error loading configurations:', error)
-    return []
-  }
-}
-
-function saveConfigurations(configs: ComparisonConfiguration[]): void {
-  ensureConfigDir()
-
-  try {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(configs, null, 2))
-  } catch (error) {
-    console.error('[ConfigStorage] Error saving configurations:', error)
-    throw error
-  }
-}
-
-function generateId(): string {
-  return `config_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-}
+import { v4 as uuidv4 } from 'uuid'
 
 export class ConfigurationStorage {
-
+  /**
+   * Get all configurations as summaries
+   */
   static getAllSummaries(): SavedConfigurationSummary[] {
-    const configs = loadConfigurations()
-    return configs.map(config => ({
-      id: config.id,
-      name: config.name,
-      description: config.description,
-      datasetCount: config.selectedDatasets?.length || 0,
-      groupCount: config.dataElementGroups?.length || 0,
-      createdAt: config.createdAt,
-      lastRunAt: config.lastRunAt,
-      isActive: config.isActive
+    const db = getDb()
+
+    const stmt = db.prepare(`
+      SELECT
+        id,
+        name,
+        description,
+        json_array_length(selected_datasets) as datasetCount,
+        json_array_length(data_element_groups) as groupCount,
+        created_at as createdAt,
+        last_run_at as lastRunAt,
+        is_active as isActive
+      FROM configurations
+      ORDER BY created_at DESC
+    `)
+
+    const rows = stmt.all() as any[]
+
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      datasetCount: row.datasetCount || 0,
+      groupCount: row.groupCount || 0,
+      createdAt: row.createdAt,
+      lastRunAt: row.lastRunAt,
+      isActive: Boolean(row.isActive)
     }))
   }
 
+  /**
+   * Get a configuration by ID
+   */
   static getById(id: string): ComparisonConfiguration | null {
-    const configs = loadConfigurations()
-    return configs.find(config => config.id === id) || null
-  }
+    const db = getDb()
 
-  static save(config: Omit<ComparisonConfiguration, 'id' | 'createdAt' | 'updatedAt'>): ComparisonConfiguration {
-    const configs = loadConfigurations()
+    const stmt = db.prepare(`
+      SELECT * FROM configurations WHERE id = ?
+    `)
 
-    const newConfig: ComparisonConfiguration = {
-      ...config,
-      id: generateId(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }
+    const row = stmt.get(id) as any
 
-    configs.push(newConfig)
-    saveConfigurations(configs)
-
-    console.log(`[ConfigStorage] ✅ Saved configuration: ${newConfig.name} (${newConfig.id})`)
-    return newConfig
-  }
-
-  static update(id: string, updates: Partial<Omit<ComparisonConfiguration, 'id' | 'createdAt'>>): ComparisonConfiguration | null {
-    const configs = loadConfigurations()
-    const configIndex = configs.findIndex(config => config.id === id)
-
-    if (configIndex === -1) {
+    if (!row) {
       return null
     }
 
-    configs[configIndex] = {
-      ...configs[configIndex],
-      ...updates,
-      updatedAt: new Date().toISOString()
-    }
-
-    saveConfigurations(configs)
-
-    console.log(`[ConfigStorage] ✅ Updated configuration: ${configs[configIndex].name} (${id})`)
-    return configs[configIndex]
+    return this.rowToConfig(row)
   }
 
+  /**
+   * Save a new configuration
+   */
+  static save(
+    config: Omit<ComparisonConfiguration, 'id' | 'createdAt' | 'updatedAt'>
+  ): ComparisonConfiguration {
+    const db = getDb()
+
+    const id = uuidv4()
+    const now = new Date().toISOString()
+
+    // Encrypt passwords
+    const sourcePassEncrypted = ensureEncrypted(config.sourcePass)
+    const destinationPassEncrypted = ensureEncrypted(config.destinationPass)
+
+    const stmt = db.prepare(`
+      INSERT INTO configurations (
+        id, name, description,
+        source_url, source_user, source_pass_encrypted,
+        selected_source_dataset, selected_source_org_units, selected_source_org_names,
+        selected_data_elements, period,
+        destination_url, destination_user, destination_pass_encrypted,
+        selected_dest_dataset, selected_dest_org_units, selected_dest_org_names,
+        data_element_mapping,
+        source_org_unit_tree, destination_org_unit_tree,
+        selected_datasets, data_element_groups,
+        is_active, created_at, updated_at
+      ) VALUES (
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?, ?,
+        ?, ?, ?,
+        ?, ?, ?,
+        ?,
+        ?, ?,
+        ?, ?,
+        ?, ?, ?
+      )
+    `)
+
+    stmt.run(
+      id, config.name, config.description || null,
+      config.sourceUrl, config.sourceUser, sourcePassEncrypted,
+      config.selectedSourceDataset || null,
+      JSON.stringify(config.selectedSourceOrgUnits || []),
+      JSON.stringify(config.selectedSourceOrgNames || []),
+      JSON.stringify(config.selectedDataElements || []),
+      config.period || null,
+      config.destinationUrl, config.destinationUser, destinationPassEncrypted,
+      config.selectedDestDataset || null,
+      JSON.stringify(config.selectedDestOrgUnits || []),
+      JSON.stringify(config.selectedDestOrgNames || []),
+      config.dataElementMapping || null,
+      config.sourceOrgUnitTree ? JSON.stringify(config.sourceOrgUnitTree) : null,
+      config.destinationOrgUnitTree ? JSON.stringify(config.destinationOrgUnitTree) : null,
+      JSON.stringify(config.selectedDatasets || []),
+      JSON.stringify(config.dataElementGroups || []),
+      config.isActive !== false ? 1 : 0,
+      now, now
+    )
+
+    console.log(`[ConfigStorage] ✅ Saved configuration: ${config.name} (${id})`)
+
+    // Return the saved configuration
+    return this.getById(id)!
+  }
+
+  /**
+   * Update an existing configuration
+   */
+  static update(
+    id: string,
+    updates: Partial<Omit<ComparisonConfiguration, 'id' | 'createdAt'>>
+  ): ComparisonConfiguration | null {
+    const db = getDb()
+
+    // Check if configuration exists
+    const existing = this.getById(id)
+    if (!existing) {
+      return null
+    }
+
+    const now = new Date().toISOString()
+
+    // Build update query dynamically based on provided fields
+    const fields: string[] = []
+    const values: any[] = []
+
+    if (updates.name !== undefined) {
+      fields.push('name = ?')
+      values.push(updates.name)
+    }
+    if (updates.description !== undefined) {
+      fields.push('description = ?')
+      values.push(updates.description)
+    }
+    if (updates.sourceUrl !== undefined) {
+      fields.push('source_url = ?')
+      values.push(updates.sourceUrl)
+    }
+    if (updates.sourceUser !== undefined) {
+      fields.push('source_user = ?')
+      values.push(updates.sourceUser)
+    }
+    if (updates.sourcePass !== undefined) {
+      fields.push('source_pass_encrypted = ?')
+      values.push(ensureEncrypted(updates.sourcePass))
+    }
+    if (updates.destinationUrl !== undefined) {
+      fields.push('destination_url = ?')
+      values.push(updates.destinationUrl)
+    }
+    if (updates.destinationUser !== undefined) {
+      fields.push('destination_user = ?')
+      values.push(updates.destinationUser)
+    }
+    if (updates.destinationPass !== undefined) {
+      fields.push('destination_pass_encrypted = ?')
+      values.push(ensureEncrypted(updates.destinationPass))
+    }
+    if (updates.selectedDatasets !== undefined) {
+      fields.push('selected_datasets = ?')
+      values.push(JSON.stringify(updates.selectedDatasets))
+    }
+    if (updates.dataElementGroups !== undefined) {
+      fields.push('data_element_groups = ?')
+      values.push(JSON.stringify(updates.dataElementGroups))
+    }
+    if (updates.isActive !== undefined) {
+      fields.push('is_active = ?')
+      values.push(updates.isActive ? 1 : 0)
+    }
+
+    // Always update updated_at
+    fields.push('updated_at = ?')
+    values.push(now)
+
+    // Add ID at the end
+    values.push(id)
+
+    const stmt = db.prepare(`
+      UPDATE configurations
+      SET ${fields.join(', ')}
+      WHERE id = ?
+    `)
+
+    stmt.run(...values)
+
+    console.log(`[ConfigStorage] ✅ Updated configuration: ${updates.name || existing.name} (${id})`)
+
+    return this.getById(id)
+  }
+
+  /**
+   * Mark configuration as run
+   */
   static markAsRun(id: string): boolean {
-    const configs = loadConfigurations()
-    const configIndex = configs.findIndex(config => config.id === id)
+    const db = getDb()
 
-    if (configIndex === -1) {
-      return false
-    }
+    const stmt = db.prepare(`
+      UPDATE configurations
+      SET last_run_at = ?
+      WHERE id = ?
+    `)
 
-    configs[configIndex].lastRunAt = new Date().toISOString()
-    saveConfigurations(configs)
+    const result = stmt.run(new Date().toISOString(), id)
 
-    return true
+    return result.changes > 0
   }
 
+  /**
+   * Delete a configuration
+   */
   static delete(id: string): boolean {
-    const configs = loadConfigurations()
-    const initialLength = configs.length
-    const updatedConfigs = configs.filter(config => config.id !== id)
+    const db = getDb()
 
-    if (updatedConfigs.length === initialLength) {
-      return false
+    const stmt = db.prepare(`
+      DELETE FROM configurations WHERE id = ?
+    `)
+
+    const result = stmt.run(id)
+
+    if (result.changes > 0) {
+      console.log(`[ConfigStorage] ✅ Deleted configuration: ${id}`)
+      return true
     }
 
-    saveConfigurations(updatedConfigs)
-
-    console.log(`[ConfigStorage] ✅ Deleted configuration: ${id}`)
-    return true
+    return false
   }
 
+  /**
+   * Toggle active status
+   */
   static toggleActive(id: string): ComparisonConfiguration | null {
-    const configs = loadConfigurations()
-    const configIndex = configs.findIndex(config => config.id === id)
+    const db = getDb()
 
-    if (configIndex === -1) {
+    const config = this.getById(id)
+    if (!config) {
       return null
     }
 
-    configs[configIndex].isActive = !configs[configIndex].isActive
-    configs[configIndex].updatedAt = new Date().toISOString()
+    const newStatus = !config.isActive
 
-    saveConfigurations(configs)
+    const stmt = db.prepare(`
+      UPDATE configurations
+      SET is_active = ?, updated_at = ?
+      WHERE id = ?
+    `)
 
-    console.log(`[ConfigStorage] ✅ Toggled configuration status: ${configs[configIndex].name} -> ${configs[configIndex].isActive ? 'Active' : 'Inactive'}`)
-    return configs[configIndex]
+    stmt.run(newStatus ? 1 : 0, new Date().toISOString(), id)
+
+    console.log(`[ConfigStorage] ✅ Toggled configuration status: ${config.name} -> ${newStatus ? 'Active' : 'Inactive'}`)
+
+    return this.getById(id)
+  }
+
+  /**
+   * Convert database row to ComparisonConfiguration object
+   */
+  private static rowToConfig(row: any): ComparisonConfiguration {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      sourceUrl: row.source_url,
+      sourceUser: row.source_user,
+      sourcePass: decrypt(row.source_pass_encrypted),
+      selectedSourceDataset: row.selected_source_dataset || '',
+      selectedSourceOrgUnits: JSON.parse(row.selected_source_org_units || '[]'),
+      selectedSourceOrgNames: JSON.parse(row.selected_source_org_names || '[]'),
+      selectedDataElements: JSON.parse(row.selected_data_elements || '[]'),
+      period: row.period || '',
+      destinationUrl: row.destination_url,
+      destinationUser: row.destination_user,
+      destinationPass: decrypt(row.destination_pass_encrypted),
+      selectedDestDataset: row.selected_dest_dataset || '',
+      selectedDestOrgUnits: JSON.parse(row.selected_dest_org_units || '[]'),
+      selectedDestOrgNames: JSON.parse(row.selected_dest_org_names || '[]'),
+      dataElementMapping: row.data_element_mapping || '',
+      sourceOrgUnitTree: row.source_org_unit_tree ? JSON.parse(row.source_org_unit_tree) : undefined,
+      destinationOrgUnitTree: row.destination_org_unit_tree ? JSON.parse(row.destination_org_unit_tree) : undefined,
+      selectedDatasets: JSON.parse(row.selected_datasets || '[]'),
+      dataElementGroups: JSON.parse(row.data_element_groups || '[]'),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastRunAt: row.last_run_at,
+      isActive: Boolean(row.is_active)
+    }
   }
 }

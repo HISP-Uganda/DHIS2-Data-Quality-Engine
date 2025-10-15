@@ -1,7 +1,9 @@
 import express from 'express'
 import cors from 'cors'
 import bodyParser from 'body-parser'
+import dotenv from 'dotenv'
 import { ConfigurationStorage } from './configStorage'
+import { initializeDatabase, testConnection, closeDb, healthCheck } from './db/connection'
 
 import {
   listSchedules,
@@ -27,6 +29,36 @@ import { emailService } from './notifications/emailService'
 import { whatsappService } from './notifications/whatsappService'
 import { smsService } from './notifications/smsService'
 
+// Phase 3: Performance & Scalability imports
+import { cacheService } from './cache/cacheService'
+import {
+  enqueueComparison,
+  getComparisonJobStatus,
+  cancelComparisonJob,
+  getQueueStats,
+  cleanupOldJobs,
+  closeQueue
+} from './queue/comparisonQueue'
+import { validateAuthCached, fetchDatasetsCached, fetchDataElementsCached, invalidateInstanceCache } from './cache/dhisCache'
+
+// Load environment variables
+dotenv.config()
+
+// Initialize database on startup
+console.log('[App] Initializing database...')
+try {
+  initializeDatabase()
+  if (testConnection()) {
+    console.log('[App] ✅ Database ready')
+  } else {
+    console.error('[App] ❌ Database connection failed')
+    process.exit(1)
+  }
+} catch (error) {
+  console.error('[App] ❌ Failed to initialize database:', error)
+  process.exit(1)
+}
+
 const app = express()
 app.use(cors())
 app.use(bodyParser.json({ limit: '50mb' }))
@@ -37,9 +69,40 @@ app.use((req, _res, next) => {
   next()
 })
 
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('[App] SIGTERM received, closing database...')
+  closeDb()
+  process.exit(0)
+})
+
+process.on('SIGINT', () => {
+  console.log('[App] SIGINT received, closing database...')
+  closeDb()
+  process.exit(0)
+})
+
 
 app.get('/', (_req, res) => {
   res.send('🚀 DQ Engine API is up and running!')
+})
+
+// Health check endpoint
+app.get('/api/health', (_req, res) => {
+  const dbHealth = healthCheck()
+
+  res.json({
+    status: dbHealth.healthy ? 'healthy' : 'unhealthy',
+    timestamp: new Date().toISOString(),
+    database: {
+      healthy: dbHealth.healthy,
+      path: dbHealth.dbPath,
+      size: dbHealth.dbSize,
+      inTransaction: dbHealth.inTransaction
+    },
+    uptime: process.uptime(),
+    memory: process.memoryUsage()
+  })
 })
 
 app.get('/api/schedules', (_req, res) => {
@@ -244,6 +307,33 @@ app.post('/api/get-org-units', async (req, res) => {
   }
 })
 
+
+// Authentication endpoint to avoid CORS issues
+app.post('/api/validate-auth', async (req, res) => {
+  console.log('[DQ API] POST /api/validate-auth')
+  const { sourceUrl, sourceUser, sourcePass } = req.body
+
+  try {
+    const baseSrc = sourceUrl.replace(/\/$/, '')
+    const authSrc = Buffer.from(`${sourceUser}:${sourcePass}`).toString('base64')
+
+    const resp = await fetch(`${baseSrc}/api/me.json`, {
+      headers: { Authorization: `Basic ${authSrc}` },
+    })
+
+    if (!resp.ok) {
+      throw new Error(`Authentication failed: ${resp.status}`)
+    }
+
+    const data = await resp.json()
+    console.log(`[DQ API] ✅ Authentication successful for user: ${data.displayName || sourceUser}`)
+    res.json({ success: true, user: data })
+
+  } catch (err: any) {
+    console.error('[DQ API] validate-auth error:', err)
+    res.status(401).json({ error: err.message })
+  }
+})
 
 app.post('/api/get-datasets', async (req, res) => {
   console.log('[DQ API] POST /api/get-datasets')
@@ -1185,6 +1275,142 @@ app.get('/api/dashboard-metrics', (_req, res) => {
     console.error('[DQ API] dashboard-metrics error:', err)
     res.status(500).json({ error: err.message })
   }
+})
+
+// ==========================================
+// CACHE & QUEUE ENDPOINTS (Phase 3)
+// ==========================================
+
+// Cache management endpoints
+app.get('/api/cache/stats', (_req, res) => {
+  const stats = cacheService.getStats()
+  res.json(stats)
+})
+
+app.post('/api/cache/clear', async (_req, res) => {
+  try {
+    await cacheService.clear()
+    res.json({ success: true, message: 'Cache cleared successfully' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/cache/invalidate-instance', async (req, res) => {
+  try {
+    const { url, username, password } = req.body
+    await invalidateInstanceCache(url, username, password)
+    res.json({ success: true, message: 'Instance cache invalidated' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Use cached DHIS2 endpoints (replaces direct endpoints)
+app.post('/api/validate-auth-cached', async (req, res) => {
+  try {
+    const { sourceUrl, sourceUser, sourcePass } = req.body
+    const result = await validateAuthCached(sourceUrl, sourceUser, sourcePass)
+    res.json({ success: true, user: result })
+  } catch (err: any) {
+    res.status(401).json({ error: err.message })
+  }
+})
+
+app.post('/api/get-datasets-cached', async (req, res) => {
+  try {
+    const { sourceUrl, sourceUser, sourcePass } = req.body
+    const result = await fetchDatasetsCached(sourceUrl, sourceUser, sourcePass)
+    res.json(result)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/get-dataset-elements-cached', async (req, res) => {
+  try {
+    const { sourceUrl, sourceUser, sourcePass, datasetId } = req.body
+    const result = await fetchDataElementsCached(sourceUrl, sourceUser, sourcePass, datasetId)
+    res.json(result)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Queue management endpoints
+app.get('/api/queue/stats', async (_req, res) => {
+  try {
+    const stats = await getQueueStats()
+    res.json(stats)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/queue/comparison', async (req, res) => {
+  try {
+    const jobData = req.body
+    const priority = jobData.priority || 0
+
+    const jobId = await enqueueComparison(jobData, priority)
+
+    if (!jobId) {
+      throw new Error('Failed to enqueue comparison job')
+    }
+
+    res.json({ success: true, jobId, message: 'Comparison job enqueued successfully' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/queue/job/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params
+    const status = await getComparisonJobStatus(jobId)
+    res.json(status)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/queue/job/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params
+    const cancelled = await cancelComparisonJob(jobId)
+
+    if (cancelled) {
+      res.json({ success: true, message: 'Job cancelled successfully' })
+    } else {
+      res.status(404).json({ error: 'Job not found or already completed' })
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/queue/cleanup', async (_req, res) => {
+  try {
+    await cleanupOldJobs()
+    res.json({ success: true, message: 'Old jobs cleaned up successfully' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Graceful shutdown - close queue connections
+process.on('SIGTERM', async () => {
+  console.log('[App] SIGTERM received, closing connections...')
+  await closeQueue()
+  closeDb()
+  process.exit(0)
+})
+
+process.on('SIGINT', async () => {
+  console.log('[App] SIGINT received, closing connections...')
+  await closeQueue()
+  closeDb()
+  process.exit(0)
 })
 
 initScheduler()

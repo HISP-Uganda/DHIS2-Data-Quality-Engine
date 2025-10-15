@@ -288,13 +288,28 @@ const createPredefinedGroups = (allElements: any[], datasetDetails: any[]): Data
     return groups
 }
 
-// Function to create automatic initial data element mappings based on name similarity
-const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: string): DataElementGroup[] => {
+// Function to create automatic initial data element mappings based on the user's selected mappings from DQ form
+const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: string, selectedDataElements: string[]): DataElementGroup[] => {
     console.log('[createAutomaticMapping] Starting with', datasetDetails.length, 'datasets')
+    console.log('[createAutomaticMapping] Selected data elements:', selectedDataElements)
+    console.log('[createAutomaticMapping] Data element mapping:', dataElementMapping)
 
     const groups: DataElementGroup[] = []
 
-    // Parse the data element mapping to get mapped elements (if provided)
+    // Build a map of all available data elements across all datasets
+    const allDataElements = new Map<string, any>()
+    datasetDetails.forEach(dataset => {
+        dataset.dataSetElements?.forEach((element: any) => {
+            allDataElements.set(element.dataElement.id, {
+                id: element.dataElement.id,
+                displayName: element.dataElement.displayName,
+                datasetId: dataset.id,
+                datasetName: dataset.displayName
+            })
+        })
+    })
+
+    // Parse the data element mapping to get source->destination pairs
     const parsedMapping: Record<string, string> = {}
     if (dataElementMapping && dataElementMapping.trim()) {
         try {
@@ -310,27 +325,149 @@ const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: strin
         }
     }
 
-    const mappedSourceIds = Object.keys(parsedMapping)
-    console.log('[createAutomaticMapping] Mapped source IDs:', mappedSourceIds)
+    console.log('[createAutomaticMapping] Parsed', Object.keys(parsedMapping).length, 'explicit mappings')
 
-    // If we have specific mappings, filter by them, otherwise use all elements
-    const filteredDatasetDetails = mappedSourceIds.length > 0
-        ? datasetDetails.map(dataset => ({
-            ...dataset,
-            dataSetElements: dataset.dataSetElements?.filter((element: any) =>
-                mappedSourceIds.includes(element.dataElement.id)
-            ) || []
-        }))
-        : datasetDetails
+    // Strategy 1: If we have explicit mappings, create ONE GROUP PER MAPPED PAIR
+    if (Object.keys(parsedMapping).length > 0) {
+        console.log('[createAutomaticMapping] Creating groups from explicit mappings...')
 
-    console.log('[createAutomaticMapping] Filtered elements:', filteredDatasetDetails.map(ds => ({
-        dataset: ds.displayName,
-        elements: ds.dataSetElements?.length || 0
-    })))
+        const processedElements = new Set<string>()
+        let groupIndex = 0
 
-    // Get all available data elements from all datasets
+        Object.entries(parsedMapping).forEach(([sourceId, destId]) => {
+            const sourceElement = allDataElements.get(sourceId)
+            const destElement = allDataElements.get(destId)
+
+            if (!sourceElement && !destElement) {
+                console.warn('[createAutomaticMapping] Could not find elements for mapping:', sourceId, '->', destId)
+                return
+            }
+
+            // Use whichever element we found as reference
+            const referenceElement = sourceElement || destElement
+            const referenceElementName = referenceElement.displayName
+
+            console.log('[createAutomaticMapping] Finding similar elements for:', referenceElementName)
+
+            const similarElements: { [datasetId: string]: any } = {}
+
+            // Find similar elements across all datasets
+            datasetDetails.forEach(dataset => {
+                let bestMatch: any = null
+                let bestSimilarity = 0
+
+                dataset.dataSetElements?.forEach((element: any) => {
+                    if (processedElements.has(element.dataElement.id)) return
+
+                    const similarity = calculateAdvancedSimilarity(referenceElementName, element.dataElement.displayName)
+                    if (similarity > bestSimilarity && similarity >= 0.4) { // Lower threshold
+                        bestMatch = element.dataElement
+                        bestSimilarity = similarity
+                    }
+                })
+
+                if (bestMatch) {
+                    similarElements[dataset.id] = {
+                        id: bestMatch.id,
+                        displayName: bestMatch.displayName,
+                        datasetId: dataset.id,
+                        datasetName: dataset.displayName
+                    }
+                    processedElements.add(bestMatch.id)
+                }
+            })
+
+            // Create group if we found matches in at least 1 dataset (not 2, to be more permissive)
+            if (Object.keys(similarElements).length >= 1) {
+                groupIndex++
+                const group: DataElementGroup = {
+                    id: `mapped_${groupIndex}`,
+                    logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
+                    elements: {}
+                }
+
+                // Initialize all dataset slots
+                datasetDetails.forEach(dataset => {
+                    group.elements[dataset.id] = similarElements[dataset.id] || null
+                })
+
+                groups.push(group)
+                console.log('[createAutomaticMapping] Created group:', group.logicalName, 'with', Object.keys(similarElements).length, 'elements')
+            }
+        })
+
+        console.log('[createAutomaticMapping] Created', groups.length, 'groups from', Object.keys(parsedMapping).length, 'explicit mappings')
+        return groups
+    }
+
+    // Strategy 2: Use selected data elements if available
+    if (selectedDataElements && selectedDataElements.length > 0) {
+        console.log('[createAutomaticMapping] Creating groups from', selectedDataElements.length, 'selected elements')
+
+        const processedElements = new Set<string>()
+        let groupIndex = 0
+
+        selectedDataElements.forEach(selectedId => {
+            const referenceElement = allDataElements.get(selectedId)
+            if (!referenceElement) {
+                console.warn('[createAutomaticMapping] Could not find element:', selectedId)
+                return
+            }
+
+            const referenceElementName = referenceElement.displayName
+            const similarElements: { [datasetId: string]: any } = {}
+
+            // Find similar elements across all datasets
+            datasetDetails.forEach(dataset => {
+                let bestMatch: any = null
+                let bestSimilarity = 0
+
+                dataset.dataSetElements?.forEach((element: any) => {
+                    if (processedElements.has(element.dataElement.id)) return
+
+                    const similarity = calculateAdvancedSimilarity(referenceElementName, element.dataElement.displayName)
+                    if (similarity > bestSimilarity && similarity >= 0.4) {
+                        bestMatch = element.dataElement
+                        bestSimilarity = similarity
+                    }
+                })
+
+                if (bestMatch) {
+                    similarElements[dataset.id] = {
+                        id: bestMatch.id,
+                        displayName: bestMatch.displayName,
+                        datasetId: dataset.id,
+                        datasetName: dataset.displayName
+                    }
+                    processedElements.add(bestMatch.id)
+                }
+            })
+
+            if (Object.keys(similarElements).length >= 1) {
+                groupIndex++
+                const group: DataElementGroup = {
+                    id: `selected_${groupIndex}`,
+                    logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
+                    elements: {}
+                }
+
+                datasetDetails.forEach(dataset => {
+                    group.elements[dataset.id] = similarElements[dataset.id] || null
+                })
+
+                groups.push(group)
+            }
+        })
+
+        console.log('[createAutomaticMapping] Created', groups.length, 'groups from selected elements')
+        return groups
+    }
+
+    // Strategy 3: Fallback - use predefined patterns
+    console.log('[createAutomaticMapping] No mappings or selections, using predefined patterns')
+
     const allElements: any[] = []
-    filteredDatasetDetails.forEach(dataset => {
+    datasetDetails.forEach(dataset => {
         dataset.dataSetElements?.forEach((element: any) => {
             allElements.push({
                 ...element.dataElement,
@@ -340,81 +477,10 @@ const createAutomaticMapping = (datasetDetails: any[], dataElementMapping: strin
         })
     })
 
-    console.log('[createAutomaticMapping] Total elements to process:', allElements.length)
-
-    // First, try to create predefined logical groups
-    const predefinedGroups = createPredefinedGroups(allElements, filteredDatasetDetails)
+    const predefinedGroups = createPredefinedGroups(allElements, datasetDetails)
     groups.push(...predefinedGroups)
 
-    // Track elements that have been used in predefined groups
-    const processedElements = new Set<string>()
-    predefinedGroups.forEach(group => {
-        Object.values(group.elements).forEach(element => {
-            if (element) processedElements.add(element.id)
-        })
-    })
-
-    // Then create similarity-based groups for remaining elements
-    const remainingElements = allElements.filter(el => !processedElements.has(el.id))
-    console.log('[createAutomaticMapping] Remaining elements for similarity matching:', remainingElements.length)
-
-    for (const baseElement of remainingElements) {
-        if (processedElements.has(baseElement.id)) continue
-
-        const similarElements: { [datasetId: string]: any } = {}
-
-        // Find best matching elements across all datasets
-        filteredDatasetDetails.forEach(dataset => {
-            let bestMatch: any = null
-            let bestSimilarity = 0
-
-            dataset.dataSetElements?.forEach((element: any) => {
-                if (processedElements.has(element.dataElement.id)) return
-
-                const similarity = calculateAdvancedSimilarity(baseElement.displayName, element.dataElement.displayName)
-                if (similarity > bestSimilarity && similarity >= 0.6) { // Lowered threshold for more matches
-                    bestMatch = element.dataElement
-                    bestSimilarity = similarity
-                }
-            })
-
-            if (bestMatch) {
-                similarElements[dataset.id] = {
-                    id: bestMatch.id,
-                    displayName: bestMatch.displayName,
-                    datasetId: dataset.id,
-                    datasetName: dataset.displayName
-                }
-            }
-        })
-
-        // Only create group if at least 2 elements match (for comparison)
-        if (Object.keys(similarElements).length >= 2) {
-            const group: DataElementGroup = {
-                id: `similarity_${groups.length + 1}`,
-                logicalName: createLogicalGroupName(Object.values(similarElements).filter(el => el !== null)),
-                elements: {}
-            }
-
-            // Initialize all dataset slots
-            filteredDatasetDetails.forEach(dataset => {
-                group.elements[dataset.id] = similarElements[dataset.id] || null
-            })
-
-            groups.push(group)
-
-            // Mark elements as processed
-            Object.values(similarElements).forEach(element => {
-                if (element) processedElements.add(element.id)
-            })
-        }
-
-        processedElements.add(baseElement.id)
-    }
-
-    console.log('[createAutomaticMapping] Final groups created:', groups.length,
-                '(', predefinedGroups.length, 'predefined,', groups.length - predefinedGroups.length, 'similarity-based )')
-
+    console.log('[createAutomaticMapping] Created', groups.length, 'predefined groups')
     return groups
 }
 
@@ -669,6 +735,7 @@ const performDatasetComparison = async (
     destinationUser: string,
     destinationPass: string,
     orgUnit: string,
+    orgUnitName: string,
     period: string,
     selectedDatasetIds: string[],
     dataElementGroups: DataElementGroup[],
@@ -834,14 +901,12 @@ const performDatasetComparison = async (
     }
     
     onProgress('Comparing data element values across datasets...', 80)
-    
+
     // Use user-defined data element mappings
     const comparisonResults: ComparisonResult[] = []
-    
-    // Get org unit name - using ID for now to avoid direct API calls
-    // In a production environment, you could enhance the backend API to include org unit names
-    const orgUnitName = orgUnit
-    
+
+    // orgUnitName is now passed as parameter
+
     onProgress('Analyzing data element value differences...', 90)
     
     // Process each user-defined data element group
@@ -1067,11 +1132,18 @@ export default function DataComparisonModal({
     // Mutation for performing comparison
     const comparisonMutation = useMutation({
         mutationFn: async (datasetIds: string[]) => {
+            // Get org unit name from selectedDestOrgNames based on destinationOrgUnit ID
+            const orgUnitIndex = selectedDestOrgUnits.findIndex(id => id === destinationOrgUnit)
+            const orgUnitName = orgUnitIndex >= 0 && selectedDestOrgNames[orgUnitIndex]
+                ? selectedDestOrgNames[orgUnitIndex]
+                : destinationOrgUnit // Fallback to ID if name not found
+
             return performDatasetComparison(
                 destinationUrl,
                 destinationUser,
                 destinationPass,
                 destinationOrgUnit,
+                orgUnitName,
                 period,
                 datasetIds,
                 dataElementGroups,
@@ -1313,11 +1385,30 @@ export default function DataComparisonModal({
             }
             
             setDatasetDetails(details)
-            
+
             // Create automatic mapping
-            const autoGroups = createAutomaticMapping(details, dataElementMapping)
+            const autoGroups = createAutomaticMapping(details, dataElementMapping, selectedDataElements)
             setDataElementGroups(autoGroups)
-            
+
+            // Show success notification about automatic mapping
+            if (autoGroups.length > 0) {
+                toast({
+                    title: '✨ Auto-Mapping Complete!',
+                    description: `Automatically created ${autoGroups.length} data element groups based on name similarity. Review and adjust as needed.`,
+                    status: 'success',
+                    duration: 5000,
+                    isClosable: true,
+                })
+            } else {
+                toast({
+                    title: 'No automatic mappings found',
+                    description: 'You can manually create groups using the "Add Group" button.',
+                    status: 'info',
+                    duration: 4000,
+                    isClosable: true,
+                })
+            }
+
             // Collect all available data elements
             const allElements: DataElementDetail[] = []
             details.forEach(dataset => {
@@ -1436,12 +1527,32 @@ export default function DataComparisonModal({
     
     const regenerateAutoMapping = () => {
         if (datasetDetails.length > 0) {
-            const autoGroups = createAutomaticMapping(datasetDetails, dataElementMapping)
+            const prevGroupCount = dataElementGroups.length
+            const autoGroups = createAutomaticMapping(datasetDetails, dataElementMapping, selectedDataElements)
             setDataElementGroups(autoGroups)
+
+            // Count mapped vs selected vs predefined groups
+            const mappedCount = autoGroups.filter(g => g.id.startsWith('mapped_')).length
+            const selectedCount = autoGroups.filter(g => g.id.startsWith('selected_')).length
+            const predefinedCount = autoGroups.filter(g => g.id.startsWith('predefined_')).length
+
+            const descParts = []
+            if (mappedCount > 0) descParts.push(`${mappedCount} from mappings`)
+            if (selectedCount > 0) descParts.push(`${selectedCount} from selections`)
+            if (predefinedCount > 0) descParts.push(`${predefinedCount} predefined`)
+
             toast({
-                title: 'Mapping Regenerated',
-                description: `Created ${autoGroups.length} automatic data element groups`,
+                title: '✨ Auto-Mapping Regenerated!',
+                description: `Created ${autoGroups.length} groups${descParts.length > 0 ? ` (${descParts.join(', ')})` : ''}. ${prevGroupCount > 0 ? `Previous ${prevGroupCount} groups replaced.` : ''}`,
                 status: 'success',
+                duration: 5000,
+                isClosable: true
+            })
+        } else {
+            toast({
+                title: 'No datasets available',
+                description: 'Please select datasets first before generating mappings.',
+                status: 'warning',
                 duration: 3000
             })
         }
@@ -1710,15 +1821,16 @@ export default function DataComparisonModal({
                                                 <HStack justifyContent="space-between">
                                                     <Heading size="md" color="green.700">Step 2: Map Data Elements for Comparison</Heading>
                                             <HStack spacing={2}>
-                                                <Tooltip label="Automatically group similar data elements">
-                                                    <IconButton
-                                                        aria-label="Auto map"
-                                                        icon={<FaMagic />}
+                                                <Tooltip label="Regenerate automatic mappings using AI-powered similarity matching">
+                                                    <Button
+                                                        leftIcon={<FaMagic />}
                                                         size="sm"
                                                         onClick={regenerateAutoMapping}
                                                         colorScheme="purple"
                                                         variant="outline"
-                                                    />
+                                                    >
+                                                        Regenerate Auto-Mapping
+                                                    </Button>
                                                 </Tooltip>
                                                 <Button
                                                     leftIcon={<FaPlus />}
@@ -1726,19 +1838,24 @@ export default function DataComparisonModal({
                                                     onClick={addNewGroup}
                                                     colorScheme="blue"
                                                 >
-                                                    Add Group
+                                                    Add Group Manually
                                                 </Button>
                                             </HStack>
                                         </HStack>
                                         
                                         <Alert status="info" borderRadius="md" mb={4}>
                                             <AlertIcon />
-                                            <VStack align="start" spacing={1}>
-                                                <Text fontSize="sm" fontWeight="medium">Intelligent Data Element Mapping</Text>
+                                            <VStack align="start" spacing={1} flex="1">
+                                                <HStack justify="space-between" width="100%">
+                                                    <Text fontSize="sm" fontWeight="medium">✨ Intelligent Auto-Mapping Active</Text>
+                                                    <Badge colorScheme="green" fontSize="xs">
+                                                        {dataElementGroups.length} Groups Created
+                                                    </Badge>
+                                                </HStack>
                                                 <Text fontSize="xs" color="gray.600">
-                                                    The system automatically creates logical groups by matching data elements with similar names across datasets.
+                                                    The system automatically created <strong>{dataElementGroups.length} logical groups</strong> by matching data elements with similar names across your selected datasets.
                                                     Common health indicators like "Live Births", "Maternal Deaths", and "Antenatal Care" are pre-configured.
-                                                    You can modify these groups or add new ones manually.
+                                                    You can modify these groups, add new ones manually, or click the magic button (✨) to regenerate mappings.
                                                 </Text>
                                             </VStack>
                                         </Alert>

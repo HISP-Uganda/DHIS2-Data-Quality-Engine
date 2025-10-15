@@ -17,6 +17,7 @@ import {
     runDQ,
     fetchDatasets,
     fetchDatasetElements,
+    validateAuth,
     type Schedule,
     type DHIS2Dataset,
     type DHIS2DataElement,
@@ -24,6 +25,9 @@ import {
 import DataComparisonModal from './DataComparisonModal'
 import NotificationManagement from './NotificationManagement'
 import ConfigurationHomepage from './ConfigurationHomepage'
+import DQPeriodPicker from './DQPeriodPicker'
+import DQOrgUnitPicker from './DQOrgUnitPicker'
+import AutoMappingButton from './AutoMappingButton'
 
 export default function DQEngineView() {
     const toast = useToast()
@@ -273,20 +277,19 @@ export default function DQEngineView() {
         setSourceAuthError('')
 
         try {
-            const authHeader = `Basic ${btoa(`${sourceUser}:${sourcePass}`)}`
-            const response = await fetch(`${sourceUrl.replace(/\/$/, '')}/api/me.json`, {
-                headers: { 'Authorization': authHeader }
-            })
+            // Use backend API to validate auth (avoids CORS issues)
+            const result = await validateAuth(sourceUrl, sourceUser, sourcePass)
 
-            if (response.ok) {
+            if (result.success) {
                 setSourceAuthStatus('success')
                 toast({
                     status: 'success',
                     title: '✅ Source authentication successful',
+                    description: result.user?.displayName ? `Logged in as ${result.user.displayName}` : undefined,
                     duration: 2000
                 })
             } else {
-                throw new Error(`Authentication failed: ${response.status} ${response.statusText}`)
+                throw new Error('Authentication failed')
             }
         } catch (error: any) {
             setSourceAuthStatus('error')
@@ -307,20 +310,19 @@ export default function DQEngineView() {
         setDestAuthError('')
 
         try {
-            const authHeader = `Basic ${btoa(`${destinationUser}:${destinationPass}`)}`
-            const response = await fetch(`${destinationUrl.replace(/\/$/, '')}/api/me.json`, {
-                headers: { 'Authorization': authHeader }
-            })
+            // Use backend API to validate auth (avoids CORS issues)
+            const result = await validateAuth(destinationUrl, destinationUser, destinationPass)
 
-            if (response.ok) {
+            if (result.success) {
                 setDestAuthStatus('success')
                 toast({
                     status: 'success',
                     title: '✅ Destination authentication successful',
+                    description: result.user?.displayName ? `Logged in as ${result.user.displayName}` : undefined,
                     duration: 2000
                 })
             } else {
-                throw new Error(`Authentication failed: ${response.status} ${response.statusText}`)
+                throw new Error('Authentication failed')
             }
         } catch (error: any) {
             setDestAuthStatus('error')
@@ -1443,46 +1445,19 @@ export default function DQEngineView() {
                                             )}
                                         </Box>
                                     </FormControl>
-                                    <FormControl>
-                                        <FormLabel fontSize="sm">Period (YYYYMM)</FormLabel>
-                                        <HStack spacing={2}>
-                                            <Input
-                                                size="sm"
-                                                placeholder="202506 or June 2025"
-                                                value={period}
-                                                onChange={(e: ChangeEvent<HTMLInputElement>) => setPeriod(e.target.value)}
-                                                isDisabled={sourceAuthStatus !== 'success'}
-                                                flex={1}
-                                            />
-                                            {period && !/^\d{6}$/.test(period) && (
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    colorScheme="blue"
-                                                    onClick={() => {
-                                                        const converted = formatPeriodForDHIS2(period)
-                                                        if (converted !== period) {
-                                                            setPeriod(converted)
-                                                            toast({
-                                                                status: 'success',
-                                                                title: '📅 Period converted',
-                                                                description: `Converted to ${converted}`,
-                                                                duration: 2000
-                                                            })
-                                                        }
-                                                    }}
-                                                    minW="80px"
-                                                >
-                                                    Convert
-                                                </Button>
-                                            )}
-                                        </HStack>
-                                        {period && !/^\d{6}$/.test(period) && (
-                                            <Text fontSize="xs" color="orange.600" mt={1}>
-                                                ⚠️ Period should be in YYYYMM format (e.g., 202506 for June 2025). Click Convert to fix.
-                                            </Text>
-                                        )}
-                                    </FormControl>
+                                    <DQPeriodPicker
+                                        value={period}
+                                        onChange={(periodValue, displayName) => {
+                                            setPeriod(periodValue)
+                                            toast({
+                                                status: 'success',
+                                                title: '📅 Period selected',
+                                                description: displayName,
+                                                duration: 2000
+                                            })
+                                        }}
+                                        isDisabled={sourceAuthStatus !== 'success'}
+                                    />
                                 </SimpleGrid>
                             </Box>
 
@@ -1783,11 +1758,43 @@ export default function DQEngineView() {
                                         </Box>
                                     </FormControl>
                                     <FormControl>
-                                        <FormLabel fontSize="sm">Data Element Mapping</FormLabel>
+                                        <HStack mb={2} justify="space-between" align="center">
+                                            <FormLabel fontSize="sm" mb={0}>Data Element Mapping</FormLabel>
+                                            {selectedDataElements.length > 0 && destDataElements.length > 0 && (
+                                                <AutoMappingButton
+                                                    sourceElements={sourceDataElements.filter(de => selectedDataElements.includes(de.id))}
+                                                    targetElements={destDataElements}
+                                                    onMappingGenerated={(mapping) => {
+                                                        // Convert mapping object to string format
+                                                        const mappingStr = Object.entries(mapping)
+                                                            .map(([src, dest]) => `${src}:${dest}`)
+                                                            .join(',')
+                                                        setDataElementMapping(mappingStr)
+                                                        toast({
+                                                            status: 'success',
+                                                            title: '✨ Auto-mapping applied',
+                                                            description: `${Object.keys(mapping).length} element(s) mapped automatically`,
+                                                            duration: 3000
+                                                        })
+                                                    }}
+                                                    isDisabled={destAuthStatus !== 'success'}
+                                                />
+                                            )}
+                                        </HStack>
                                         {selectedDataElements.length > 0 && destDataElements.length > 0 ? (
                                             <VStack spacing={2} align="stretch">
                                                 {selectedDataElements.map(sourceId => {
                                                     const sourceElement = sourceDataElements.find(de => de.id === sourceId)
+                                                    // Get current mapping for this element
+                                                    let currentMapping = ''
+                                                    if (dataElementMapping) {
+                                                        const mappingObj: Record<string, string> = {}
+                                                        dataElementMapping.split(',').forEach(pair => {
+                                                            const [src, dest] = pair.split(':')
+                                                            if (src && dest) mappingObj[src.trim()] = dest.trim()
+                                                        })
+                                                        currentMapping = mappingObj[sourceId] || ''
+                                                    }
                                                     return (
                                                         <HStack key={sourceId} spacing={2}>
                                                             <Text fontSize="xs" flex={1} isTruncated>
@@ -1795,6 +1802,7 @@ export default function DQEngineView() {
                                                             </Text>
                                                             <Text fontSize="xs">→</Text>
                                                             <select
+                                                                value={currentMapping}
                                                                 style={{
                                                                     flex: 1,
                                                                     height: '24px',
@@ -1802,7 +1810,8 @@ export default function DQEngineView() {
                                                                     padding: '2px 4px',
                                                                     border: '1px solid #E2E8F0',
                                                                     borderRadius: '4px',
-                                                                    minWidth: '0'
+                                                                    minWidth: '0',
+                                                                    backgroundColor: currentMapping ? '#EBF8FF' : 'white'
                                                                 }}
                                                                 onChange={(e) => {
                                                                     // Update mapping
