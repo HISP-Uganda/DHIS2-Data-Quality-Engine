@@ -25,10 +25,10 @@ export interface ComparisonResult {
 }
 
 /**
- * Perform dataset comparison synchronously
+ * Perform dataset comparison for a single period
  * This is the core comparison logic extracted from DataComparisonModal.tsx
  */
-export async function performDatasetComparisonSync(
+async function performSinglePeriodComparison(
     destinationUrl: string,
     destinationUser: string,
     destinationPass: string,
@@ -53,6 +53,24 @@ export async function performDatasetComparisonSync(
     const auth = Buffer.from(`${destinationUser}:${destinationPass}`).toString('base64')
 
     await onProgress('Preparing dataset information...', 10)
+
+    // Fetch org unit display name if not provided or if it's a UID
+    let resolvedOrgUnitName = orgUnitName
+    if (!orgUnitName || orgUnitName === orgUnit || orgUnitName.length === 11) {
+        try {
+            const ouResponse = await fetch(
+                `${baseUrl}/api/organisationUnits/${orgUnit}.json?fields=displayName`,
+                { headers: { Authorization: `Basic ${auth}` } }
+            )
+            if (ouResponse.ok) {
+                const ouData = await ouResponse.json()
+                resolvedOrgUnitName = ouData.displayName || orgUnitName
+                console.log(`[Comparison] Resolved org unit name: ${resolvedOrgUnitName}`)
+            }
+        } catch (error) {
+            console.log('[Comparison] Could not fetch org unit display name, using provided name')
+        }
+    }
 
     // Create dataset details based on data element groups
     const datasetDetails = []
@@ -175,7 +193,7 @@ export async function performDatasetComparisonSync(
             dataElementGroup: group.id,
             logicalDataElement: group.logicalName,
             orgUnit,
-            orgUnitName,
+            orgUnitName: resolvedOrgUnitName,
             period,
             values,
             status,
@@ -186,19 +204,170 @@ export async function performDatasetComparisonSync(
     await onProgress('Calculating summary statistics...', 95)
 
     // Calculate summary
+    const validRecords = comparisonResults.filter(r => r.status === 'valid').length
     const summary = {
         totalRecords: comparisonResults.length,
-        validRecords: comparisonResults.filter(r => r.status === 'valid').length,
+        validRecords: validRecords,
+        matchingRecords: validRecords, // Alias for notifications template compatibility
         mismatchedRecords: comparisonResults.filter(r => r.status === 'mismatch').length,
         missingRecords: comparisonResults.filter(r => r.status === 'missing').length,
         outOfRangeRecords: 0,
     }
 
+    // Log summary with quality issues highlighted
+    const totalIssues = summary.mismatchedRecords + summary.missingRecords
+    console.log(`[Comparison] ========================================`)
+    console.log(`[Comparison] COMPARISON SUMMARY:`)
+    console.log(`[Comparison]   Total Records: ${summary.totalRecords}`)
+    console.log(`[Comparison]   ✅ Valid (matching): ${summary.validRecords}`)
+    console.log(`[Comparison]   ⚠️  Mismatched: ${summary.mismatchedRecords}`)
+    console.log(`[Comparison]   ❌ Missing data: ${summary.missingRecords}`)
+    console.log(`[Comparison]   🔍 Total Quality Issues: ${totalIssues}`)
+    console.log(`[Comparison] ========================================`)
+
+    // Log details of mismatched records for debugging
+    if (summary.mismatchedRecords > 0) {
+        console.log(`[Comparison] Mismatched records details:`)
+        comparisonResults
+            .filter(r => r.status === 'mismatch')
+            .slice(0, 5) // Show first 5 for debugging
+            .forEach(r => {
+                const vals = Object.values(r.values).filter(v => v !== null).join(', ')
+                console.log(`  - ${r.logicalDataElement}: [${vals}] (variance: ${r.variance})`)
+            })
+    }
+
     await onProgress('Comparison complete!', 100)
+
+    // NOTE: Automatic notifications disabled - user must manually click "Send Alert" button
+    // Notifications are now sent via the manual API endpoint: POST /api/send-comparison-notifications
+    console.log('[Comparison] ℹ️  Automatic notifications disabled - user will manually trigger via UI')
 
     return {
         datasets: datasetDetails,
         comparisonResults,
         summary,
+    }
+}
+
+/**
+ * Perform dataset comparison synchronously (supports multiple periods)
+ * Wrapper function that handles both single and multiple period comparisons
+ */
+export async function performDatasetComparisonSync(
+    destinationUrl: string,
+    destinationUser: string,
+    destinationPass: string,
+    orgUnit: string,
+    orgUnitName: string,
+    period: string | string[],
+    selectedDatasetIds: string[],
+    dataElementGroups: DataElementGroup[],
+    onProgress: (step: string, progress: number) => Promise<void> | void
+): Promise<{
+    datasets: any[]
+    comparisonResults: ComparisonResult[]
+    summary: {
+        totalRecords: number
+        validRecords: number
+        mismatchedRecords: number
+        missingRecords: number
+        outOfRangeRecords: number
+    }
+    periods?: string[] // Array of periods if multi-period
+}> {
+    // Normalize period to array
+    const periods = Array.isArray(period) ? period : [period]
+
+    if (periods.length === 1) {
+        // Single period - use existing logic directly
+        return await performSinglePeriodComparison(
+            destinationUrl,
+            destinationUser,
+            destinationPass,
+            orgUnit,
+            orgUnitName,
+            periods[0],
+            selectedDatasetIds,
+            dataElementGroups,
+            onProgress
+        )
+    }
+
+    // Multi-period comparison
+    console.log(`[Comparison] Multi-period comparison: ${periods.length} periods`)
+
+    let allDatasets: any[] = []
+    let allComparisonResults: ComparisonResult[] = []
+    let aggregatedSummary = {
+        totalRecords: 0,
+        validRecords: 0,
+        mismatchedRecords: 0,
+        missingRecords: 0,
+        outOfRangeRecords: 0
+    }
+
+    // Process each period
+    for (let i = 0; i < periods.length; i++) {
+        const currentPeriod = periods[i]
+        const periodProgress = (i / periods.length) * 100
+
+        await onProgress(`Processing period ${i + 1}/${periods.length}: ${currentPeriod}`, periodProgress)
+
+        // Create period-specific progress callback
+        const periodOnProgress = async (step: string, progress: number) => {
+            const overallProgress = periodProgress + (progress / periods.length)
+            await onProgress(`Period ${i + 1}/${periods.length}: ${step}`, overallProgress)
+        }
+
+        try {
+            const periodResult = await performSinglePeriodComparison(
+                destinationUrl,
+                destinationUser,
+                destinationPass,
+                orgUnit,
+                orgUnitName,
+                currentPeriod,
+                selectedDatasetIds,
+                dataElementGroups,
+                periodOnProgress
+            )
+
+            // Store datasets from first period only (they're the same)
+            if (i === 0) {
+                allDatasets = periodResult.datasets
+            }
+
+            // Aggregate results
+            allComparisonResults.push(...periodResult.comparisonResults)
+            aggregatedSummary.totalRecords += periodResult.summary.totalRecords
+            aggregatedSummary.validRecords += periodResult.summary.validRecords
+            aggregatedSummary.mismatchedRecords += periodResult.summary.mismatchedRecords
+            aggregatedSummary.missingRecords += periodResult.summary.missingRecords
+            aggregatedSummary.outOfRangeRecords += periodResult.summary.outOfRangeRecords
+
+        } catch (error: any) {
+            console.error(`[Comparison] Error processing period ${currentPeriod}:`, error)
+            // Continue with next period instead of failing completely
+        }
+    }
+
+    await onProgress('All periods processed!', 100)
+
+    // Log multi-period summary
+    console.log(`[Comparison] ========================================`)
+    console.log(`[Comparison] MULTI-PERIOD COMPARISON SUMMARY:`)
+    console.log(`[Comparison]   Periods processed: ${periods.length}`)
+    console.log(`[Comparison]   Total Records: ${aggregatedSummary.totalRecords}`)
+    console.log(`[Comparison]   ✅ Valid (matching): ${aggregatedSummary.validRecords}`)
+    console.log(`[Comparison]   ⚠️  Mismatched: ${aggregatedSummary.mismatchedRecords}`)
+    console.log(`[Comparison]   ❌ Missing data: ${aggregatedSummary.missingRecords}`)
+    console.log(`[Comparison] ========================================`)
+
+    return {
+        datasets: allDatasets,
+        comparisonResults: allComparisonResults,
+        summary: aggregatedSummary,
+        periods: periods
     }
 }

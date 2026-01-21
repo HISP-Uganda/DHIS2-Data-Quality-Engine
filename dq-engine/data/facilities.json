@@ -22,26 +22,104 @@
     "updatedAt": "2025-07-24T07:11:57.290Z"
   },
   {
-    "name": "Adilang HCIII",
+    "name": "Adilang Health Centre III",
     "orgUnitId": "FvewOonC8lS",
     "email": [
       "amutesasira@hispuganda.org"
     ],
     "whatsapp": [
-      "+256700372842",
-      "+256772080606"
+      "256700372842",
+      "256752712007"
     ],
-    "sms": [],
+    "sms": [
+      "256700372842"
+    ],
     "enabled": true,
     "notificationPreferences": {
       "dqRuns": true,
       "comparisons": true,
       "emailEnabled": true,
       "whatsappEnabled": true,
-      "smsEnabled": false
+      "smsEnabled": true
     },
-    "id": "facility_1753342033705_7yk0v42d1",
-    "createdAt": "2025-07-24T07:27:13.705Z",
-    "updatedAt": "2025-07-24T07:28:47.644Z"
+    "id": "facility_1761821830688_slyztzah2",
+    "createdAt": "2025-10-30T10:57:10.688Z",
+    "updatedAt": "2025-11-26T11:44:33.280Z",
+    "dqRunCount": 2
+  },
+  {
+    "name": "David Fagerlee's Medical Centre",
+    "orgUnitId": "G51dLKvQTxh",
+    "email": [
+      "socaya@hispuganda.org"
+    ],
+    "whatsapp": [
+      "256752712007"
+    ],
+    "sms": [
+      "256752712007"
+    ],
+    "enabled": true,
+    "notificationPreferences": {
+      "dqRuns": true,
+      "comparisons": true,
+      "emailEnabled": true,
+      "whatsappEnabled": true,
+      "smsEnabled": true
+    },
+    "id": "facility_1761822826909_y0q7r7gxi",
+    "createdAt": "2025-10-30T11:13:46.908Z",
+    "updatedAt": "2025-10-30T11:13:46.908Z"
+  },
+  {
+    "name": "Moroto Regional Referral Hospital",
+    "orgUnitId": "cK0jOJzBIvd",
+    "email": [
+      "skuhumura@hispuganda.org"
+    ],
+    "whatsapp": [
+      "+256702269963"
+    ],
+    "sms": [
+      "+256702269963",
+      "+256772080606"
+    ],
+    "enabled": true,
+    "notificationPreferences": {
+      "dqRuns": true,
+      "comparisons": true,
+      "emailEnabled": true,
+      "whatsappEnabled": true,
+      "smsEnabled": true
+    },
+    "id": "facility_1765175805238_meipkh9xb",
+    "createdAt": "2025-12-08T06:36:45.238Z",
+    "updatedAt": "2025-12-08T08:31:28.492Z",
+    "dqRunCount": 2
+  },
+  {
+    "name": "Abim General Hospital",
+    "orgUnitId": "RxPKxSBe0DC",
+    "email": [
+      "abim@hispuganda.org"
+    ],
+    "whatsapp": [
+      "+256700372842"
+    ],
+    "sms": [
+      "256782893962"
+    ],
+    "enabled": true,
+    "notificationPreferences": {
+      "dqRuns": true,
+      "comparisons": true,
+      "emailEnabled": true,
+      "whatsappEnabled": true,
+      "smsEnabled": true
+    },
+    "id": "facility_1765266281105_7lt6o1guj",
+    "createdAt": "2025-12-09T07:44:41.105Z",
+    "updatedAt": "2025-12-09T07:45:12.325Z",
+    "dqRunCount": 1
   }
 ]

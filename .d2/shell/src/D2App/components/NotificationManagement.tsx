@@ -3,12 +3,14 @@ import {
     Box, Heading, VStack, HStack, FormControl, FormLabel, Input, Button,
     Table, Thead, Tbody, Tr, Th, Td, useToast, Text, SimpleGrid,
     Divider, Badge, Select, Textarea, Checkbox, IconButton,
-    Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, 
+    Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter,
     ModalBody, ModalCloseButton, useDisclosure, Flex, Spacer,
     Alert, AlertIcon, AlertTitle, AlertDescription, Switch
 } from '@chakra-ui/react'
 import { FaPlus, FaEdit, FaTrash, FaBell, FaEnvelope, FaWhatsapp, FaPaperPlane } from 'react-icons/fa'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import DQOrgUnitPicker from './DQOrgUnitPicker'
+import type { OrgUnitTreeNode } from '../api'
 
 // Types
 interface FacilityContact {
@@ -134,6 +136,12 @@ const testDQNotification = async (orgUnitId: string): Promise<void> => {
     return response.json()
 }
 
+const fetchOrgUnitTree = async (): Promise<OrgUnitTreeNode[]> => {
+    const response = await fetch(`${API_BASE}/api/org-units/tree`)
+    if (!response.ok) throw new Error('Failed to fetch org unit tree')
+    return response.json()
+}
+
 export default function NotificationManagement() {
     const toast = useToast()
     const queryClient = useQueryClient()
@@ -145,6 +153,7 @@ export default function NotificationManagement() {
     const [facilityForm, setFacilityForm] = useState({
         name: '',
         orgUnitId: '',
+        orgUnitName: '',
         email: '',
         whatsapp: '',
         sms: '',
@@ -189,6 +198,11 @@ export default function NotificationManagement() {
         queryKey: ['service-status'],
         queryFn: testServices,
         refetchInterval: 30000 // Refresh every 30 seconds
+    })
+
+    const { data: orgUnitTree = [], isLoading: orgUnitTreeLoading } = useQuery({
+        queryKey: ['org-unit-tree'],
+        queryFn: fetchOrgUnitTree
     })
 
     // Mutations
@@ -284,6 +298,7 @@ export default function NotificationManagement() {
         setFacilityForm({
             name: '',
             orgUnitId: '',
+            orgUnitName: '',
             email: '',
             whatsapp: '',
             sms: '',
@@ -479,10 +494,10 @@ export default function NotificationManagement() {
                                             </Td>
                                             <Td>
                                                 <VStack align="start" spacing={1}>
-                                                    {facility.notificationPreferences.dqRuns && (
+                                                    {facility.notificationPreferences?.dqRuns && (
                                                         <Badge size="sm" colorScheme="blue">DQ Runs</Badge>
                                                     )}
-                                                    {facility.notificationPreferences.comparisons && (
+                                                    {facility.notificationPreferences?.comparisons && (
                                                         <Badge size="sm" colorScheme="purple">Comparisons</Badge>
                                                     )}
                                                 </VStack>
@@ -541,28 +556,47 @@ export default function NotificationManagement() {
                 <ModalOverlay />
                 <ModalContent>
                     <ModalHeader>
-                        {editingFacility ? 'Edit Facility' : 'Add New Facility'}
+                        <Flex justify="space-between" align="center">
+                            <Text>{editingFacility ? 'Edit Facility' : 'Add New Facility'}</Text>
+                            <HStack spacing={2}>
+                                <Button
+                                    colorScheme="teal"
+                                    size="sm"
+                                    onClick={handleFacilitySubmit}
+                                    isLoading={createFacilityMutation.status === 'pending' || updateFacilityMutation.status === 'pending'}
+                                    isDisabled={!facilityForm.name || !facilityForm.orgUnitId}
+                                >
+                                    {editingFacility ? 'Update' : 'Create'}
+                                </Button>
+                                <ModalCloseButton position="relative" top={0} right={0} />
+                            </HStack>
+                        </Flex>
                     </ModalHeader>
-                    <ModalCloseButton />
                     <ModalBody>
                         <VStack spacing={4}>
                             <FormControl isRequired>
-                                <FormLabel>Facility Name</FormLabel>
-                                <Input
-                                    value={facilityForm.name}
-                                    onChange={(e) => setFacilityForm(prev => ({ ...prev, name: e.target.value }))}
-                                    placeholder="Enter facility name"
+                                <FormLabel>Select Facility</FormLabel>
+                                <DQOrgUnitPicker
+                                    treeData={orgUnitTree}
+                                    selectedOrgUnits={facilityForm.orgUnitId ? [facilityForm.orgUnitId] : []}
+                                    selectedOrgNames={facilityForm.name ? [facilityForm.name] : []}
+                                    onSelectionChange={(ids, names) => {
+                                        setFacilityForm(prev => ({
+                                            ...prev,
+                                            orgUnitId: ids[0] || '',
+                                            orgUnitName: names[0] || '',
+                                            name: names[0] || '' // Auto-populate facility name
+                                        }))
+                                    }}
+                                    label="Select facility from organisation unit tree"
+                                    multiple={false}
+                                    isLoading={orgUnitTreeLoading}
                                 />
-                            </FormControl>
-
-                            <FormControl isRequired>
-                                <FormLabel>Organization Unit ID</FormLabel>
-                                <Input
-                                    value={facilityForm.orgUnitId}
-                                    onChange={(e) => setFacilityForm(prev => ({ ...prev, orgUnitId: e.target.value }))}
-                                    placeholder="Enter DHIS2 org unit ID"
-                                    fontFamily="mono"
-                                />
+                                {facilityForm.orgUnitId && (
+                                    <Text fontSize="xs" color="gray.600" mt={1}>
+                                        UID: {facilityForm.orgUnitId}
+                                    </Text>
+                                )}
                             </FormControl>
 
                             <FormControl>
@@ -687,19 +721,6 @@ export default function NotificationManagement() {
                             </FormControl>
                         </VStack>
                     </ModalBody>
-                    <ModalFooter>
-                        <Button variant="ghost" mr={3} onClick={onFacilityModalClose}>
-                            Cancel
-                        </Button>
-                        <Button
-                            colorScheme="teal"
-                            onClick={handleFacilitySubmit}
-                            isLoading={createFacilityMutation.status === 'pending' || updateFacilityMutation.status === 'pending'}
-                            isDisabled={!facilityForm.name || !facilityForm.orgUnitId}
-                        >
-                            {editingFacility ? 'Update' : 'Create'} Facility
-                        </Button>
-                    </ModalFooter>
                 </ModalContent>
             </Modal>
 

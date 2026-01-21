@@ -10,6 +10,7 @@ export interface DQRunResult {
     }
     results?: Array<{
         dataElement: string
+        dataElementName?: string
         value: string
         issues: string[]
     }>
@@ -314,6 +315,36 @@ Generated at ${timestamp}
                             <div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; margin: 20px 0;">
                                 <strong>⚠️ Action Required:</strong> ${issueCount} inconsistencies found that need review.
                             </div>
+
+                            <h3>Top Issues</h3>
+                            <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+                                <thead>
+                                    <tr style="background-color: #f8f9fa;">
+                                        <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">#</th>
+                                        <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Data Element</th>
+                                        <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Status</th>
+                                        <th style="padding: 10px; text-align: left; border: 1px solid #dee2e6;">Period</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${result.comparisonResults
+                                        .filter(r => r.status !== 'match')
+                                        .slice(0, 10)
+                                        .map((issue, idx) => `
+                                            <tr>
+                                                <td style="padding: 10px; border: 1px solid #dee2e6;">${idx + 1}</td>
+                                                <td style="padding: 10px; border: 1px solid #dee2e6;">${issue.dataElementName}</td>
+                                                <td style="padding: 10px; border: 1px solid #dee2e6;">
+                                                    <span style="color: ${issue.status === 'mismatch' ? '#ff6600' : '#cc0000'}; font-weight: bold;">
+                                                        ${issue.status === 'mismatch' ? '⚠️ Mismatch' : '❌ Missing'}
+                                                    </span>
+                                                </td>
+                                                <td style="padding: 10px; border: 1px solid #dee2e6;">${issue.period}</td>
+                                            </tr>
+                                        `).join('')}
+                                </tbody>
+                            </table>
+                            ${issueCount > 10 ? `<p style="font-style: italic; color: #6c757d;">...and ${issueCount - 10} more issues. Check the dashboard for full details.</p>` : ''}
                         `}
                         
                         <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
@@ -329,96 +360,101 @@ Generated at ${timestamp}
 
     static generateComparisonWhatsApp(facility: FacilityInfo, result: ComparisonResult): string {
         const timestamp = new Date().toLocaleString()
-        const { summary } = result
+        const { summary, comparisonResults } = result
         const issueCount = summary.mismatchedRecords + summary.missingRecords
-        const matchRate = summary.totalRecords > 0 
+        const matchRate = summary.totalRecords > 0
             ? Math.round((summary.matchingRecords / summary.totalRecords) * 100)
             : 100
 
         const statusIcon = issueCount === 0 ? '✅' : '⚠️'
-        
-        return `${statusIcon} *Dataset Comparison Report*\n\n` +
+
+        let message = `${statusIcon} *Dataset Comparison Report*\n\n` +
                `Facility: ${facility.name}\n` +
+               `Period: ${comparisonResults[0]?.period || 'N/A'}\n` +
                `Time: ${timestamp}\n\n` +
                `📊 *Results:*\n` +
                `• Total Records: ${summary.totalRecords}\n` +
-               `• Matching: ${summary.matchingRecords}\n` +
-               `• Mismatched: ${summary.mismatchedRecords}\n` +
-               `• Missing: ${summary.missingRecords}\n\n` +
-               `🎯 *Consistency Rate: ${matchRate}%*\n\n` +
-               `${issueCount === 0 ? 
-                   '🎉 Perfect! All data matches.' : 
-                   `⚠️ ${issueCount} issues need review.`
-               }`
+               `• ✓ Matching: ${summary.matchingRecords}\n` +
+               `• ✗ Mismatched: ${summary.mismatchedRecords}\n` +
+               `• ? Missing: ${summary.missingRecords}\n\n` +
+               `🎯 *Consistency Rate: ${matchRate}%*\n\n`
+
+        if (issueCount === 0) {
+            message += '🎉 Perfect! All data matches across datasets.'
+        } else {
+            // Add top 3 issues
+            const issues = comparisonResults
+                .filter(r => r.status !== 'match')
+                .slice(0, 3)
+
+            if (issues.length > 0) {
+                message += '*Top Issues:*\n'
+                issues.forEach((issue, idx) => {
+                    message += `${idx + 1}. ${issue.dataElementName}: *${issue.status}*\n`
+                })
+
+                if (issueCount > 3) {
+                    message += `\n_...plus ${issueCount - 3} more issues_\n`
+                }
+            }
+
+            message += '\n⚠️ Please review and correct inconsistencies.'
+        }
+
+        return message
     }
 
     // SMS Templates (concise text-only versions)
-    static generateDQRunSMS(facility: FacilityInfo, result: DQRunResult): string {
-        const timestamp = new Date().toLocaleString('en-GB', { 
-            day: '2-digit', 
-            month: '2-digit', 
-            year: '2-digit',
-            hour: '2-digit', 
-            minute: '2-digit' 
-        })
-        
+    static generateDQRunSMS(facility: FacilityInfo, result: DQRunResult, runNumber?: number, dashboardUrl?: string): string {
         if (!result.success) {
-            return `DQ RUN FAILED\n` +
-                   `Facility: ${facility.name}\n` +
-                   `Period: ${result.summary?.period || 'Unknown'}\n` +
-                   `Time: ${timestamp}\n` +
-                   `Error: ${result.error || 'Unknown error'}\n` +
-                   `Contact system administrator.`
+            return `DQA Run failed for ${facility.name}. ${result.error || 'Unknown error'}. Contact administrator.`
         }
 
         const { summary } = result
-        const completenessRate = summary.recordsProcessed > 0 
-            ? Math.round(((summary.recordsProcessed - summary.issuesFound) / summary.recordsProcessed) * 100)
-            : 100
+        const facilityName = facility.name
+        const issuesCount = summary.issuesFound
+        const runNum = runNumber || 1
+        const loginUrl = dashboardUrl || 'https://dqas.hispuganda.org/dqa360'
 
-        const statusIcon = summary.issuesFound === 0 ? 'GOOD' : summary.issuesFound <= 5 ? 'WARNING' : 'ISSUES'
-        
-        return `DQ REPORT [${statusIcon}]\n` +
-               `Facility: ${facility.name}\n` +
-               `Period: ${summary.period}\n` +
-               `Time: ${timestamp}\n` +
-               `Records: ${summary.recordsProcessed}\n` +
-               `Issues: ${summary.issuesFound}\n` +
-               `Quality: ${completenessRate}%\n` +
-               `${summary.issuesFound === 0 ? 
-                   'No issues found!' : 
-                   `${summary.issuesFound} issues need attention.`
-               }`
+        // New concise format: DQA Run (No. X) completed for (Facility) with (Y) issues found, log in here to view.
+        return `DQA Run (No. ${runNum}) completed for ${facilityName} with ${issuesCount} issue${issuesCount !== 1 ? 's' : ''} found, log in ${loginUrl} to view.`
     }
 
-    static generateComparisonSMS(facility: FacilityInfo, result: ComparisonResult): string {
-        const timestamp = new Date().toLocaleString('en-GB', { 
-            day: '2-digit', 
-            month: '2-digit', 
-            year: '2-digit',
-            hour: '2-digit', 
-            minute: '2-digit' 
-        })
-        
-        const { summary } = result
+    static generateComparisonSMS(facility: FacilityInfo, result: ComparisonResult, runNumber?: number, dashboardUrl?: string): string {
+        const { summary, comparisonResults } = result
         const issueCount = summary.mismatchedRecords + summary.missingRecords
-        const matchRate = summary.totalRecords > 0 
-            ? Math.round((summary.matchingRecords / summary.totalRecords) * 100)
-            : 100
+        const facilityName = facility.name
+        const runNum = runNumber || 1
+        const loginUrl = dashboardUrl || 'https://dqas.hispuganda.org/dqa360'
 
-        const statusIcon = issueCount === 0 ? 'MATCHED' : 'ISSUES'
-        
-        return `DATASET COMPARISON [${statusIcon}]\n` +
-               `Facility: ${facility.name}\n` +
-               `Time: ${timestamp}\n` +
-               `Total: ${summary.totalRecords}\n` +
-               `Matching: ${summary.matchingRecords}\n` +
-               `Mismatched: ${summary.mismatchedRecords}\n` +
-               `Missing: ${summary.missingRecords}\n` +
-               `Consistency: ${matchRate}%\n` +
-               `${issueCount === 0 ? 
-                   'Perfect match!' : 
-                   `${issueCount} issues need review.`
-               }`
+        // Detect if multi-period by getting unique periods from comparison results
+        const periods = new Set<string>()
+        comparisonResults.forEach(r => periods.add(r.period))
+        const periodArray = Array.from(periods).sort()
+
+        // Format period display
+        let periodDisplay = ''
+        if (periodArray.length === 1) {
+            periodDisplay = `Period ${periodArray[0]}`
+        } else if (periodArray.length > 1) {
+            // Check if consecutive
+            const isConsecutive = periodArray.every((p, i) => {
+                if (i === 0) return true
+                const prev = parseInt(periodArray[i - 1])
+                const curr = parseInt(p)
+                return curr === prev + 1 || curr === prev + 89 // Handle year boundary
+            })
+
+            if (isConsecutive) {
+                periodDisplay = `Periods ${periodArray[0]}-${periodArray[periodArray.length - 1]} (${periodArray.length} months)`
+            } else if (periodArray.length <= 3) {
+                periodDisplay = `Periods ${periodArray.join(', ')}`
+            } else {
+                periodDisplay = `${periodArray.length} periods (${periodArray[0]} to ${periodArray[periodArray.length - 1]})`
+            }
+        }
+
+        // New concise format with period support
+        return `DQA Run (No. ${runNum}) completed for ${facilityName} ${periodDisplay} with ${issueCount} issue${issueCount !== 1 ? 's' : ''} found, log in ${loginUrl} to view.`
     }
 }

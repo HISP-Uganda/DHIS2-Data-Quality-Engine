@@ -4,8 +4,9 @@ import {
     Spinner, useToast, Select, Input, FormControl, FormLabel, Flex, Icon
 } from '@chakra-ui/react'
 import { FaPlay, FaRocket, FaCheck } from 'react-icons/fa'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getSavedConfigurations, runSavedConfiguration, type SavedConfigurationSummary } from '../api'
+import DQPeriodPicker from './DQPeriodPicker'
 
 interface QuickRunConfigsProps {
     currentOrgUnit?: string
@@ -13,21 +14,24 @@ interface QuickRunConfigsProps {
     onConfigRun?: (configId: string, configName: string) => void
 }
 
-export default function QuickRunConfigs({ 
-    currentOrgUnit, 
-    currentPeriod, 
-    onConfigRun 
+export default function QuickRunConfigs({
+    currentOrgUnit,
+    currentPeriod,
+    onConfigRun
 }: QuickRunConfigsProps) {
     const toast = useToast()
+    const queryClient = useQueryClient()
     const [selectedConfigId, setSelectedConfigId] = useState<string>('')
     const [runOrgUnit, setRunOrgUnit] = useState(currentOrgUnit || '')
-    const [runPeriod, setRunPeriod] = useState(currentPeriod || '')
+    const [runPeriod, setRunPeriod] = useState<string | string[]>(currentPeriod || '')
+    const [runPeriodDisplay, setRunPeriodDisplay] = useState<string>('')
 
     // Query to fetch saved configurations
     const { data: savedConfigurations = [], isLoading: loadingConfigs, refetch } = useQuery({
         queryKey: ['saved-configurations'],
         queryFn: getSavedConfigurations,
-        staleTime: 2 * 60 * 1000,
+        staleTime: 0, // Always fetch fresh configurations
+        refetchOnMount: true, // Refetch when component mounts
     })
 
     // Filter only active configurations
@@ -35,13 +39,18 @@ export default function QuickRunConfigs({
 
     // Mutation for running saved configuration
     const runConfigMutation = useMutation({
-        mutationFn: async (params: { configId: string; orgUnit: string; period: string }) => {
+        mutationFn: async (params: { configId: string; orgUnit: string; period: string | string[] }) => {
             return runSavedConfiguration(params.configId, {
                 orgUnit: params.orgUnit,
                 period: params.period
             })
         },
         onSuccess: (data) => {
+            // Invalidate all comparison and DQ run caches to force fresh data
+            queryClient.invalidateQueries({ queryKey: ['comparisons'] })
+            queryClient.invalidateQueries({ queryKey: ['dq-runs'] })
+            queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] })
+
             toast({
                 title: 'Configuration Running!',
                 description: data.message,
@@ -71,10 +80,10 @@ export default function QuickRunConfigs({
             return
         }
 
-        if (!runOrgUnit || !runPeriod) {
+        if (!runOrgUnit || !runPeriod || (Array.isArray(runPeriod) && runPeriod.length === 0)) {
             toast({
                 title: 'Parameters Required',
-                description: 'Please specify organization unit and period',
+                description: 'Please specify organization unit and period(s)',
                 status: 'warning',
                 duration: 3000
             })
@@ -166,21 +175,23 @@ export default function QuickRunConfigs({
                         {/* Quick Parameters */}
                         <HStack spacing={3}>
                             <FormControl flex="1">
-                                <FormLabel fontSize="sm">Org Unit ID</FormLabel>
+                                <FormLabel fontSize="sm">Organization Unit</FormLabel>
                                 <Input
                                     size="sm"
                                     value={runOrgUnit}
                                     onChange={(e) => setRunOrgUnit(e.target.value)}
-                                    placeholder="e.g., ImspTQPwCqd"
+                                    placeholder="Enter org unit UID or select from tree"
                                 />
                             </FormControl>
                             <FormControl flex="1">
-                                <FormLabel fontSize="sm">Period</FormLabel>
-                                <Input
-                                    size="sm"
+                                <FormLabel fontSize="sm">Period(s)</FormLabel>
+                                <DQPeriodPicker
                                     value={runPeriod}
-                                    onChange={(e) => setRunPeriod(e.target.value)}
-                                    placeholder="e.g., 202501"
+                                    onChange={(period, display) => {
+                                        setRunPeriod(period)
+                                        setRunPeriodDisplay(display)
+                                    }}
+                                    allowMultiple={true}
                                 />
                             </FormControl>
                         </HStack>

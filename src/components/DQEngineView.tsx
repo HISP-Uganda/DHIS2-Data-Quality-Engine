@@ -41,7 +41,7 @@ export default function DQEngineView() {
     const [dataElements, setDataElements] = useState('')
     const [datasetDC, setDatasetDC] = useState('')
     const [orgUnit, setOrgUnit] = useState('')
-    const [period, setPeriod] = useState('')
+    const [period, setPeriod] = useState<string | string[]>('')
 
     // form state - destination
     const [destinationUrl, setDestinationUrl] = useState('')
@@ -197,8 +197,19 @@ export default function DQEngineView() {
                     duration: 5000
                 })
 
-                // Open comparison modal if data was posted to destination
-                if (destPosted > 0 && variables.destinationUrl && variables.destinationDataset) {
+                // DEBUG: Log the condition check values
+                console.log('[DQEngineView] Checking if should open comparison modal:', {
+                    destPosted,
+                    'destPosted > 0': destPosted > 0,
+                    'variables.destinationUrl': variables.destinationUrl,
+                    'variables.destinationDataset': variables.destinationDataset,
+                    'Destination configured': Boolean(variables.destinationUrl && variables.destinationDataset),
+                    'Will open modal': Boolean(variables.destinationUrl && variables.destinationDataset)
+                })
+
+                // Open comparison modal if destination was configured (regardless of whether data was posted)
+                // This allows users to set up data element mappings even if initial posting failed
+                if (variables.destinationUrl && variables.destinationDataset) {
                     // Determine which org units actually had data posted
                     let actualDestinationOrgUnits: string | string[]
                     if (variables.destinationOrgUnit) {
@@ -801,8 +812,14 @@ export default function DQEngineView() {
         return flat
     }
 
-    // Helper function to convert period to DHIS2 format
-    const formatPeriodForDHIS2 = (periodInput: string): string => {
+    // Helper function to convert period to DHIS2 format (supports both single string and array)
+    const formatPeriodForDHIS2 = (periodInput: string | string[]): string | string[] => {
+        // Handle array of periods
+        if (Array.isArray(periodInput)) {
+            return periodInput.map(p => formatPeriodForDHIS2(p) as string)
+        }
+
+        // Handle single period string
         // If already in YYYYMM format, return as is
         if (/^\d{6}$/.test(periodInput)) {
             return periodInput
@@ -896,6 +913,72 @@ export default function DQEngineView() {
                                         behavior: 'smooth',
                                         block: 'start'
                                     })
+                                }}
+                                onEditConfiguration={async (configId) => {
+                                    console.log(`Edit Configuration: Loading configuration: ${configId}`)
+
+                                    try {
+                                        // Load the full configuration WITH passwords for editing
+                                        const { getConfiguration } = await import('../api')
+                                        const fullConfig = await getConfiguration(configId, true)
+
+                                        console.log('Edit Configuration: Pre-populating form with saved parameters:', fullConfig)
+
+                                        // Pre-populate the entire DQ form with saved parameters
+                                        setSourceUrl(fullConfig.sourceUrl || '')
+                                        setSourceUser(fullConfig.sourceUser || '')
+                                        setSourcePass(fullConfig.sourcePass || '')
+                                        setSelectedSourceDataset(fullConfig.selectedSourceDataset || '')
+                                        setSelectedSourceOrgUnits(fullConfig.selectedSourceOrgUnits || [])
+                                        setSelectedSourceOrgNames(fullConfig.selectedSourceOrgNames || [])
+                                        setSelectedDataElements(fullConfig.selectedDataElements || [])
+                                        setPeriod(fullConfig.period || '')
+
+                                        // Also set the form fields that are used for validation
+                                        setDatasetDC(fullConfig.selectedSourceDataset || '')
+                                        setDataElements((fullConfig.selectedDataElements || []).join(','))
+                                        setOrgUnit((fullConfig.selectedSourceOrgUnits || []).join(','))
+
+                                        setDestinationUrl(fullConfig.destinationUrl || '')
+                                        setDestinationUser(fullConfig.destinationUser || '')
+                                        setDestinationPass(fullConfig.destinationPass || '')
+                                        setSelectedDestDataset(fullConfig.selectedDestDataset || '')
+                                        setSelectedDestOrgUnits(fullConfig.selectedDestOrgUnits || [])
+                                        setSelectedDestOrgNames(fullConfig.selectedDestOrgNames || [])
+                                        setDataElementMapping(fullConfig.dataElementMapping || '')
+
+                                        // Also set destination form fields
+                                        setDestinationDataset(fullConfig.selectedDestDataset || '')
+                                        setDestinationOrgUnit((fullConfig.selectedDestOrgUnits || []).join(','))
+
+                                        // Set authentication status to success since we have saved working credentials
+                                        setSourceAuthStatus('success')
+                                        if (fullConfig.destinationUrl && fullConfig.destinationUser && fullConfig.destinationPass) {
+                                            setDestAuthStatus('success')
+                                        }
+
+                                        // Scroll to the manual configuration form
+                                        dqFormsRef.current?.scrollIntoView({
+                                            behavior: 'smooth',
+                                            block: 'start'
+                                        })
+
+                                        toast({
+                                            title: 'Configuration Loaded',
+                                            description: `"${fullConfig.name}" is ready for editing. Make your changes and save.`,
+                                            status: 'info',
+                                            duration: 4000
+                                        })
+
+                                    } catch (error: any) {
+                                        console.error('Edit Configuration error:', error)
+                                        toast({
+                                            title: 'Load Failed',
+                                            description: error.message,
+                                            status: 'error',
+                                            duration: 4000
+                                        })
+                                    }
                                 }}
                                 onRunConfiguration={async (configId, configName) => {
                                     console.log(`Quick Run: Loading and executing configuration: ${configName} (${configId})`)
@@ -1457,6 +1540,7 @@ export default function DQEngineView() {
                                             })
                                         }}
                                         isDisabled={sourceAuthStatus !== 'success'}
+                                        allowMultiple={true}
                                     />
                                 </SimpleGrid>
                             </Box>
@@ -1892,6 +1976,13 @@ export default function DQEngineView() {
                                                 parsedMapping![source] = dest
                                             }
                                         })
+                                        console.log('[DQEngineView] ✅ Parsed data element mappings:', {
+                                            raw: dataElementMapping,
+                                            parsed: parsedMapping,
+                                            count: Object.keys(parsedMapping).length
+                                        })
+                                    } else {
+                                        console.log('[DQEngineView] ⚠️ No data element mappings provided - destination posting will be skipped')
                                     }
 
                                     console.log('[DQEngineView] Form values:', {
@@ -1912,12 +2003,20 @@ export default function DQEngineView() {
 
                                     // Format period to DHIS2 format
                                     const formattedPeriod = formatPeriodForDHIS2(period)
-                                    if (formattedPeriod !== period) {
-                                        console.log(`[DQEngineView] Converted period "${period}" to "${formattedPeriod}"`)
+
+                                    // Show conversion toast if format changed
+                                    const periodChanged = Array.isArray(period)
+                                        ? JSON.stringify(formattedPeriod) !== JSON.stringify(period)
+                                        : formattedPeriod !== period
+
+                                    if (periodChanged) {
+                                        const periodDisplay = Array.isArray(period) ? period.join(', ') : period
+                                        const formattedDisplay = Array.isArray(formattedPeriod) ? formattedPeriod.join(', ') : formattedPeriod
+                                        console.log(`[DQEngineView] Converted period "${periodDisplay}" to "${formattedDisplay}"`)
                                         toast({
                                             status: 'info',
                                             title: '📅 Period format converted',
-                                            description: `Converted "${period}" to DHIS2 format "${formattedPeriod}"`,
+                                            description: `Converted "${periodDisplay}" to DHIS2 format "${formattedDisplay}"`,
                                             duration: 3000
                                         })
                                     }
@@ -2004,11 +2103,11 @@ export default function DQEngineView() {
                                 variant="outline"
                                 leftIcon={<FaSearch />}
                                 onClick={async () => {
-                                    if (!selectedSourceOrgUnits.length || !selectedSourceDataset || !period) {
+                                    if (!selectedSourceOrgUnits.length || !selectedSourceDataset || !period || (Array.isArray(period) && period.length === 0)) {
                                         toast({
                                             status: 'warning',
                                             title: 'Missing information',
-                                            description: 'Please select dataset, org unit, and period first',
+                                            description: 'Please select dataset, org unit, and period(s) first',
                                             duration: 3000
                                         })
                                         return
@@ -2057,7 +2156,7 @@ export default function DQEngineView() {
                                         })
                                     }
                                 }}
-                                isDisabled={!selectedSourceOrgUnits.length || !selectedSourceDataset || !period}
+                                isDisabled={!selectedSourceOrgUnits.length || !selectedSourceDataset || !period || (Array.isArray(period) && period.length === 0)}
                             >
                                 Check Data Availability
                             </Button>
@@ -2069,6 +2168,8 @@ export default function DQEngineView() {
                                 isOpen={comparisonModalOpen}
                                 onClose={() => {
                                     setComparisonModalOpen(false)
+                                    // Clear the last run data to ensure fresh comparison on next run
+                                    setLastSuccessfulRun(null)
                                 }}
 
                                 // Source system data from DQ form

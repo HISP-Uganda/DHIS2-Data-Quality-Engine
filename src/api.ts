@@ -12,7 +12,7 @@ export interface RunDQParams {
     dataElements: string[]
     datasetDC: string
     orgUnit: string | string[] // Support both single org unit and multiple org units
-    period: string
+    period: string | string[]
     // Destination instance parameters
     destinationUrl?: string
     destinationUser?: string
@@ -53,13 +53,22 @@ export function createSchedule(payload: {
 export async function runDQ(params: RunDQParams) {
     console.log('[api.ts] → POST /api/run-dq', params)
     console.log('[api.ts] Making fetch request to http://localhost:4000/api/run-dq')
-    
+
     try {
+        // Create AbortController for timeout
+        const controller = new AbortController()
+        const timeout = setTimeout(() => {
+            controller.abort()
+        }, 300000) // 5 minute timeout
+
         const resp = await fetch('http://localhost:4000/api/run-dq', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(params),
+            signal: controller.signal
         })
+
+        clearTimeout(timeout)
         
         console.log('[api.ts] ← Response received, status:', resp.status)
         console.log('[api.ts] ← Response headers:', Object.fromEntries(resp.headers.entries()))
@@ -119,8 +128,14 @@ export async function runDQ(params: RunDQParams) {
         console.log('[api.ts] ← JSON response:', result)
         return result
         
-    } catch (fetchError) {
+    } catch (fetchError: any) {
         console.error('[api.ts] ← Fetch error:', fetchError)
+
+        // Handle timeout specifically
+        if (fetchError.name === 'AbortError') {
+            throw new Error('Request timed out after 5 minutes. The DHIS2 server may be slow or unresponsive. Please try again or check your network connection.')
+        }
+
         throw fetchError
     }
 }
@@ -228,7 +243,7 @@ export async function checkDataAvailability(params: {
     sourcePass: string
     datasetId: string
     orgUnitId: string
-    period: string
+    period: string | string[]
 }): Promise<{
     success: boolean
     checks: Array<{
@@ -265,7 +280,7 @@ export async function getDatasetData(params: {
     sourcePass: string
     datasetId: string
     orgUnitId: string
-    period: string
+    period: string | string[]
 }): Promise<{
     dataValues: Array<{
         dataElement: string
@@ -296,7 +311,7 @@ export interface ComparisonConfiguration {
     id: string
     name: string
     description?: string
-    
+
     // Source system configuration
     sourceUrl: string
     sourceUser: string
@@ -305,9 +320,9 @@ export interface ComparisonConfiguration {
     selectedSourceOrgUnits: string[]
     selectedSourceOrgNames: string[]
     selectedDataElements: string[]
-    period: string
-    
-    // Destination system configuration  
+    period: string | string[]
+
+    // Destination system configuration
     destinationUrl: string
     destinationUser: string
     destinationPass: string
@@ -381,7 +396,7 @@ export async function getConfiguration(id: string, includePasswords: boolean = f
 export async function saveConfiguration(config: {
     name: string
     description?: string
-    
+
     // Source system configuration
     sourceUrl: string
     sourceUser: string
@@ -390,9 +405,9 @@ export async function saveConfiguration(config: {
     selectedSourceOrgUnits: string[]
     selectedSourceOrgNames: string[]
     selectedDataElements: string[]
-    period: string
-    
-    // Destination system configuration  
+    period: string | string[]
+
+    // Destination system configuration
     destinationUrl: string
     destinationUser: string
     destinationPass: string
@@ -462,7 +477,7 @@ export async function toggleConfigurationStatus(id: string): Promise<ComparisonC
 
 export async function runSavedConfiguration(id: string, params: {
     orgUnit: string
-    period: string
+    period: string | string[]
 }): Promise<{
     success: boolean
     message: string

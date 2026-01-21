@@ -4,9 +4,10 @@ import React, { useRef, useState } from "react";
 import { FaCalendar, FaCalendarAlt, FaCalendarWeek } from 'react-icons/fa'
 
 interface DQPeriodPickerProps {
-    value: string; // YYYYMM format
-    onChange: (period: string, displayName: string) => void;
+    value: string | string[]; // YYYYMM format (single or multiple)
+    onChange: (period: string | string[], displayName: string) => void;
     isDisabled?: boolean;
+    allowMultiple?: boolean; // Enable multi-period selection
 }
 
 const MONTHS = [
@@ -49,12 +50,48 @@ const formatPeriodDisplay = (period: string): string => {
     return monthObj ? `${monthObj.label} ${parsed.year}` : period
 }
 
-const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerProps) => {
+const formatMultiPeriodDisplay = (periods: string[]): string => {
+    if (periods.length === 0) return 'Select Periods'
+    if (periods.length === 1) return formatPeriodDisplay(periods[0])
+
+    // Sort periods
+    const sorted = [...periods].sort()
+
+    // Check if consecutive
+    const isConsecutive = sorted.every((p, i) => {
+        if (i === 0) return true
+        const prev = parseInt(sorted[i - 1])
+        const curr = parseInt(p)
+        return curr === prev + 1 || curr === prev + 89 // Handle year boundary (e.g., 202512 -> 202601)
+    })
+
+    if (isConsecutive && sorted.length > 2) {
+        const start = formatPeriodDisplay(sorted[0])
+        const end = formatPeriodDisplay(sorted[sorted.length - 1])
+        return `${start.split(' ')[0]} ${sorted[0].substring(0, 4)} - ${end.split(' ')[0]} ${sorted[sorted.length - 1].substring(0, 4)}`
+    }
+
+    // Show count if too many
+    if (periods.length > 3) {
+        return `${periods.length} periods selected`
+    }
+
+    // List them out
+    return sorted.map(p => {
+        const parsed = parsePeriod(p)
+        if (!parsed) return p
+        const month = MONTHS.find(m => m.value === parsed.month)
+        return month ? `${month.short} ${parsed.year}` : p
+    }).join(', ')
+}
+
+const DQPeriodPicker = ({ value, onChange, isDisabled = false, allowMultiple = false }: DQPeriodPickerProps) => {
     const { isOpen, onToggle, onClose } = useDisclosure()
     const ref = useRef<HTMLDivElement>(null)
     const buttonRef = useRef<HTMLButtonElement>(null)
     const [selectedYear, setSelectedYear] = useState<string>('')
     const [selectedMonth, setSelectedMonth] = useState<string>('')
+    const [selectedPeriods, setSelectedPeriods] = useState<string[]>([])
 
     const years = generateYears()
     const currentYear = new Date().getFullYear().toString()
@@ -64,26 +101,67 @@ const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerP
 
     // Initialize from value prop when modal opens
     React.useEffect(() => {
-        if (isOpen && value) {
-            const parsed = parsePeriod(value)
-            if (parsed) {
-                setSelectedYear(parsed.year)
-                setSelectedMonth(parsed.month)
+        if (isOpen) {
+            if (allowMultiple && Array.isArray(value)) {
+                setSelectedPeriods(value)
+                // Set year/month from first selected period
+                if (value.length > 0) {
+                    const parsed = parsePeriod(value[0])
+                    if (parsed) {
+                        setSelectedYear(parsed.year)
+                        setSelectedMonth(parsed.month)
+                    }
+                }
+            } else if (value && !Array.isArray(value)) {
+                const parsed = parsePeriod(value)
+                if (parsed) {
+                    setSelectedYear(parsed.year)
+                    setSelectedMonth(parsed.month)
+                }
+                setSelectedPeriods([value])
+            } else {
+                // Default to current
+                setSelectedYear(currentYear)
+                setSelectedMonth(currentMonth)
+                setSelectedPeriods([])
             }
-        } else if (isOpen && !value) {
-            // Default to current
-            setSelectedYear(currentYear)
-            setSelectedMonth(currentMonth)
         }
-    }, [isOpen, value])
+    }, [isOpen, value, allowMultiple])
 
     const handleMonthSelect = (year: string, month: string) => {
         const period = `${year}${month}`
-        const display = formatPeriodDisplay(period)
-        setSelectedYear(year)
-        setSelectedMonth(month)
-        onChange(period, display)
+
+        if (allowMultiple) {
+            // Toggle period in selection
+            const newSelection = selectedPeriods.includes(period)
+                ? selectedPeriods.filter(p => p !== period)
+                : [...selectedPeriods, period].sort()
+
+            setSelectedPeriods(newSelection)
+            setSelectedYear(year)
+            setSelectedMonth(month)
+
+            // Don't close modal in multi-select mode
+        } else {
+            // Single selection mode
+            const display = formatPeriodDisplay(period)
+            setSelectedYear(year)
+            setSelectedMonth(month)
+            onChange(period, display)
+            onClose()
+        }
+    }
+
+    const handleConfirmMultiple = () => {
+        if (selectedPeriods.length === 0) return
+
+        const display = formatMultiPeriodDisplay(selectedPeriods)
+        onChange(selectedPeriods, display)
         onClose()
+    }
+
+    const handleClearSelection = () => {
+        setSelectedPeriods([])
     }
 
     const handleQuickSelect = (monthsAgo: number) => {
@@ -119,7 +197,13 @@ const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerP
         return { top: "50%", left: "50%" }
     }
 
-    const displayText = value ? formatPeriodDisplay(value) : "Select Period"
+    const displayText = allowMultiple && Array.isArray(value)
+        ? formatMultiPeriodDisplay(value)
+        : value && !Array.isArray(value)
+        ? formatPeriodDisplay(value)
+        : allowMultiple
+        ? "Select Periods"
+        : "Select Period"
 
     return (
         <Stack position="relative" flex={1} spacing={1}>
@@ -156,7 +240,7 @@ const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerP
 
                 {value && (
                     <Badge ml={2} colorScheme="green" px={2} py={1}>
-                        {value}
+                        {Array.isArray(value) ? `${value.length} period${value.length !== 1 ? 's' : ''}` : value}
                     </Badge>
                 )}
             </Flex>
@@ -180,16 +264,33 @@ const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerP
                     {/* Header */}
                     <Box px="3" py="2" textAlign="right" borderBottom="1px solid" borderColor="gray.200" bg="gray.50">
                         <Text fontSize="md" fontWeight="semibold" float="left" mt="1">
-                            Select Period
+                            {allowMultiple ? 'Select Periods' : 'Select Period'}
+                            {allowMultiple && selectedPeriods.length > 0 && (
+                                <Badge ml={2} colorScheme="blue">
+                                    {selectedPeriods.length} selected
+                                </Badge>
+                            )}
                         </Text>
-                        <Button
-                            size="xs"
-                            colorScheme="gray"
-                            variant="ghost"
-                            onClick={onClose}
-                        >
-                            ✕
-                        </Button>
+                        <Flex gap={2} float="right">
+                            {allowMultiple && selectedPeriods.length > 0 && (
+                                <Button
+                                    size="xs"
+                                    colorScheme="red"
+                                    variant="ghost"
+                                    onClick={handleClearSelection}
+                                >
+                                    Clear
+                                </Button>
+                            )}
+                            <Button
+                                size="xs"
+                                colorScheme="gray"
+                                variant="ghost"
+                                onClick={onClose}
+                            >
+                                ✕
+                            </Button>
+                        </Flex>
                     </Box>
 
                     {/* Quick Select */}
@@ -255,7 +356,10 @@ const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerP
                                     </Text>
                                     <SimpleGrid columns={3} spacing={2}>
                                         {MONTHS.map(month => {
-                                            const isSelected = selectedMonth === month.value && selectedYear
+                                            const period = `${selectedYear}${month.value}`
+                                            const isSelected = allowMultiple
+                                                ? selectedPeriods.includes(period)
+                                                : selectedMonth === month.value && selectedYear
                                             const isCurrent =
                                                 month.value === currentMonth &&
                                                 selectedYear === currentYear
@@ -287,7 +391,20 @@ const DQPeriodPicker = ({ value, onChange, isDisabled = false }: DQPeriodPickerP
                             {/* Helper Text */}
                             <Text fontSize="xs" color="gray.500" textAlign="center">
                                 DHIS2 format: YYYYMM (e.g., 202501 for January 2025)
+                                {allowMultiple && ' • Click multiple months to select'}
                             </Text>
+
+                            {/* Confirm Button for Multi-Select */}
+                            {allowMultiple && (
+                                <Button
+                                    colorScheme="blue"
+                                    w="full"
+                                    onClick={handleConfirmMultiple}
+                                    isDisabled={selectedPeriods.length === 0}
+                                >
+                                    Confirm Selection ({selectedPeriods.length} period{selectedPeriods.length !== 1 ? 's' : ''})
+                                </Button>
+                            )}
                         </Stack>
                     </Box>
                 </Box>

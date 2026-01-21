@@ -2,6 +2,7 @@ interface DQRunStats {
   id: string
   timestamp: Date
   orgUnit: string
+  orgUnitName?: string // Human-readable org unit name
   period: string
   sourceDataElements: number
   destinationDataElements: number

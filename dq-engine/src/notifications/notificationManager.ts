@@ -1,6 +1,7 @@
 import { emailService, EmailNotification } from './emailService'
 import { whatsappService, WhatsAppNotification } from './whatsappService'
 import { smsService, SMSNotification } from './smsService'
+import * as newSmsService from '../services/smsService'
 import { NotificationTemplates, DQRunResult, ComparisonResult, FacilityInfo } from './templates'
 import { facilityStore, FacilityContact } from './facilityStore'
 
@@ -97,22 +98,44 @@ class NotificationManager {
                     }
                 }
 
-                // Send SMS notifications
+                // Send SMS notifications (using new D-Mark service)
                 if (facility.notificationPreferences.smsEnabled && facility.sms && facility.sms.length > 0) {
-                    const smsNotification: SMSNotification = {
-                        to: facility.sms,
-                        message: NotificationTemplates.generateDQRunSMS(facilityInfo, result)
-                    }
+                    console.log('[NotificationManager] About to generate SMS with result:', {
+                        success: result.success,
+                        issuesFound: result.summary.issuesFound,
+                        recordsProcessed: result.summary.recordsProcessed,
+                        resultsCount: result.results?.length || 0,
+                        period: result.summary.period
+                    })
+                    const message = NotificationTemplates.generateDQRunSMS(facilityInfo, result)
 
-                    const smsResult = await smsService.sendSMS(smsNotification)
-                    notificationResult.smsSent += smsResult.sent.length
-                    notificationResult.smsFailed += smsResult.failed.length
-                    
-                    if (smsResult.sent.length > 0) {
-                        console.log(`[NotificationManager] ✅ SMS sent to ${facility.name}`)
-                    }
-                    if (smsResult.failed.length > 0) {
-                        notificationResult.errors.push(`Failed to send SMS to some contacts at ${facility.name}`)
+                    console.log('[NotificationManager] Generated SMS message:', {
+                        length: message.length,
+                        preview: message.substring(0, 100),
+                        hasNewlines: message.includes('\n'),
+                        hasSpaces: message.includes(' ')
+                    })
+
+                    for (const phoneNumber of facility.sms) {
+                        try {
+                            const smsResult = await newSmsService.sendSMS({
+                                recipient: phoneNumber,
+                                message
+                            }, 'dhis2') // Try DHIS2 first, fallback to D-Mark
+
+                            if (smsResult.success) {
+                                notificationResult.smsSent++
+                                console.log(`[NotificationManager] ✅ SMS sent to ${phoneNumber} at ${facility.name} via ${smsResult.provider}`)
+                            } else {
+                                notificationResult.smsFailed++
+                                notificationResult.errors.push(`Failed to send SMS to ${phoneNumber} at ${facility.name}: ${smsResult.error}`)
+                                console.error(`[NotificationManager] ❌ SMS failed to ${phoneNumber}: ${smsResult.error}`)
+                            }
+                        } catch (error: any) {
+                            notificationResult.smsFailed++
+                            notificationResult.errors.push(`Error sending SMS to ${phoneNumber} at ${facility.name}: ${error.message}`)
+                            console.error(`[NotificationManager] ❌ SMS exception to ${phoneNumber}:`, error)
+                        }
                     }
                 }
 
@@ -224,22 +247,36 @@ class NotificationManager {
                     }
                 }
 
-                // Send SMS notifications
+                // Send SMS notifications (using new D-Mark service)
                 if (facility.notificationPreferences.smsEnabled && facility.sms && facility.sms.length > 0) {
-                    const smsNotification: SMSNotification = {
-                        to: facility.sms,
-                        message: NotificationTemplates.generateComparisonSMS(facilityInfo, result)
-                    }
+                    // Increment DQ run count and get the new number
+                    const runNumber = facilityStore.incrementDQRunCount(facility.orgUnitId)
 
-                    const smsResult = await smsService.sendSMS(smsNotification)
-                    notificationResult.smsSent += smsResult.sent.length
-                    notificationResult.smsFailed += smsResult.failed.length
-                    
-                    if (smsResult.sent.length > 0) {
-                        console.log(`[NotificationManager] ✅ Comparison SMS sent to ${facility.name}`)
-                    }
-                    if (smsResult.failed.length > 0) {
-                        notificationResult.errors.push(`Failed to send comparison SMS to some contacts at ${facility.name}`)
+                    // Get dashboard URL from environment or use default
+                    const dashboardUrl = process.env.DASHBOARD_URL || 'https://dqas.hispuganda.org/dqa360'
+
+                    const message = NotificationTemplates.generateComparisonSMS(facilityInfo, result, runNumber, dashboardUrl)
+
+                    console.log(`[NotificationManager] Sending SMS to ${facility.name} (Run #${runNumber}):`, message)
+
+                    for (const phoneNumber of facility.sms) {
+                        try {
+                            const smsResult = await newSmsService.sendSMS({
+                                recipient: phoneNumber,
+                                message
+                            }, 'dhis2') // Try DHIS2 first, fallback to D-Mark
+
+                            if (smsResult.success) {
+                                notificationResult.smsSent++
+                                console.log(`[NotificationManager] ✅ Comparison SMS sent to ${phoneNumber} at ${facility.name} via ${smsResult.provider}`)
+                            } else {
+                                notificationResult.smsFailed++
+                                notificationResult.errors.push(`Failed to send comparison SMS to ${phoneNumber} at ${facility.name}: ${smsResult.error}`)
+                            }
+                        } catch (error: any) {
+                            notificationResult.smsFailed++
+                            notificationResult.errors.push(`Error sending comparison SMS to ${phoneNumber} at ${facility.name}: ${error.message}`)
+                        }
                     }
                 }
 

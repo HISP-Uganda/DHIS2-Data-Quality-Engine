@@ -16,6 +16,7 @@ export interface FacilityContact {
         whatsappEnabled: boolean
         smsEnabled: boolean
     }
+    dqRunCount?: number // Track number of DQ runs for this facility
     createdAt: string
     updatedAt: string
 }
@@ -205,8 +206,37 @@ class FacilityStore {
                 emailEnabled: true,
                 whatsappEnabled: true,
                 smsEnabled: true
-            }
+            },
+            dqRunCount: 0
         })
+    }
+
+    // Increment DQ run count and return the new count
+    incrementDQRunCount(orgUnitId: string): number {
+        const facility = this.getFacilityByOrgUnit(orgUnitId)
+        if (!facility) {
+            console.log(`[FacilityStore] No facility found for org unit ${orgUnitId}, creating default`)
+            const newFacility = this.createDefaultFacility(orgUnitId, orgUnitId)
+            newFacility.dqRunCount = 1
+            this.updateFacility(newFacility.id, newFacility)
+            return 1
+        }
+
+        const currentCount = facility.dqRunCount || 0
+        const newCount = currentCount + 1
+        facility.dqRunCount = newCount
+        facility.updatedAt = new Date().toISOString()
+
+        this.updateFacility(facility.id, facility)
+        console.log(`[FacilityStore] Incremented DQ run count for ${facility.name}: ${newCount}`)
+
+        return newCount
+    }
+
+    // Get current DQ run count for a facility
+    getDQRunCount(orgUnitId: string): number {
+        const facility = this.getFacilityByOrgUnit(orgUnitId)
+        return facility?.dqRunCount || 0
     }
 }
 

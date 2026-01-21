@@ -1,5 +1,6 @@
 import React from 'react'
-import { Flex, Heading, HStack, Button } from '@chakra-ui/react'
+import { Flex, Heading, HStack, Button, Image } from '@chakra-ui/react'
+import logo from '../assets/logo.png'
 
 export type Tab = 'dashboard' | 'dq' | 'metadata'
 
@@ -17,7 +18,10 @@ const TopNav: React.FC<TopNavProps> = ({ tab, setTab }) => (
         justify="space-between"
         boxShadow="sm"
     >
-        <Heading size="md">IMPULSE STUDY Maternal Child Health Dashboard</Heading>
+        <HStack spacing={3}>
+            <Image src={logo} alt="IWS-App Logo" height="100px" />
+            <Heading size="md">IMPULSE STUDY Maternal Child Health Dashboard</Heading>
+        </HStack>
         <HStack spacing={4}>
             <Button
                 onClick={() => setTab('dashboard')}

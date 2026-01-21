@@ -121,6 +121,13 @@ export default function OrgUnitTreeSelector({
         onSelectionChange(selectedIds, selectedNames)
     }
 
+    // Handle single selection via onSelect
+    const handleSingleSelect = (selectedKeys: any) => {
+        const selectedIds = Array.isArray(selectedKeys) ? selectedKeys : []
+        const selectedNames = findNodeNames(treeData, selectedIds)
+        onSelectionChange(selectedIds, selectedNames)
+    }
+
     if (treeData.length === 0 && !isLoading) {
         return (
             <FormControl>
@@ -185,10 +192,12 @@ export default function OrgUnitTreeSelector({
                         <Tree
                             treeData={convertToAntTreeData(filterTreeNodes(treeData, searchTerm))}
                             checkable={multiple}
-                            checkedKeys={selectedOrgUnits}
+                            checkedKeys={multiple ? selectedOrgUnits : undefined}
+                            selectedKeys={!multiple ? selectedOrgUnits : undefined}
                             expandedKeys={expandedKeys}
                             onExpand={(keys) => setExpandedKeys(keys as string[])}
-                            onCheck={handleSelectionChange}
+                            onCheck={multiple ? handleSelectionChange : undefined}
+                            onSelect={!multiple ? handleSingleSelect : undefined}
                             showLine={{ showLeafIcon: false }}
                             height={parseInt(maxHeight) - 20}
                             style={{ fontSize: '12px' }}

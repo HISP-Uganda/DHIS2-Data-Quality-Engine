@@ -1,5 +1,5 @@
 import { getDb } from './db/connection'
-import { encrypt, decrypt, ensureEncrypted } from './utils/encryption'
+import { encrypt, decrypt, ensureEncrypted, ensureDecrypted } from './utils/encryption'
 import { ComparisonConfiguration, SavedConfigurationSummary } from './types'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -67,6 +67,21 @@ export class ConfigurationStorage {
 
     const id = uuidv4()
     const now = new Date().toISOString()
+
+    // Log what's being saved (masked for security)
+    console.log(`[ConfigStorage] Saving new config "${config.name}":`, {
+      sourceUser: config.sourceUser,
+      sourcePassLength: config.sourcePass?.length,
+      sourcePassIsMasked: config.sourcePass === '***',
+      destUser: config.destinationUser,
+      destPassLength: config.destinationPass?.length,
+      destPassIsMasked: config.destinationPass === '***'
+    })
+
+    // Check if passwords are masked
+    if (config.sourcePass === '***' || config.destinationPass === '***') {
+      throw new Error('Cannot save configuration with masked passwords. Please provide actual passwords.')
+    }
 
     // Encrypt passwords
     const sourcePassEncrypted = ensureEncrypted(config.sourcePass)
@@ -278,13 +293,24 @@ export class ConfigurationStorage {
    * Convert database row to ComparisonConfiguration object
    */
   private static rowToConfig(row: any): ComparisonConfiguration {
+    // Decrypt passwords
+    const sourcePassDecrypted = ensureDecrypted(row.source_pass_encrypted)
+    const destinationPassDecrypted = ensureDecrypted(row.destination_pass_encrypted)
+
+    console.log(`[ConfigStorage] Decrypting config ${row.id}:`, {
+      sourcePassEncrypted: row.source_pass_encrypted ? `${row.source_pass_encrypted.substring(0, 20)}...` : 'null',
+      sourcePassDecryptedLength: sourcePassDecrypted?.length,
+      destPassEncrypted: row.destination_pass_encrypted ? `${row.destination_pass_encrypted.substring(0, 20)}...` : 'null',
+      destPassDecryptedLength: destinationPassDecrypted?.length
+    })
+
     return {
       id: row.id,
       name: row.name,
       description: row.description,
       sourceUrl: row.source_url,
       sourceUser: row.source_user,
-      sourcePass: decrypt(row.source_pass_encrypted),
+      sourcePass: sourcePassDecrypted,
       selectedSourceDataset: row.selected_source_dataset || '',
       selectedSourceOrgUnits: JSON.parse(row.selected_source_org_units || '[]'),
       selectedSourceOrgNames: JSON.parse(row.selected_source_org_names || '[]'),
@@ -292,7 +318,7 @@ export class ConfigurationStorage {
       period: row.period || '',
       destinationUrl: row.destination_url,
       destinationUser: row.destination_user,
-      destinationPass: decrypt(row.destination_pass_encrypted),
+      destinationPass: destinationPassDecrypted,
       selectedDestDataset: row.selected_dest_dataset || '',
       selectedDestOrgUnits: JSON.parse(row.selected_dest_org_units || '[]'),
       selectedDestOrgNames: JSON.parse(row.selected_dest_org_names || '[]'),

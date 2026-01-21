@@ -10,7 +10,7 @@ export interface ComparisonConfiguration {
   selectedSourceOrgUnits: string[]
   selectedSourceOrgNames: string[]
   selectedDataElements: string[]
-  period: string
+  period: string | string[]
 
   destinationUrl: string
   destinationUser: string

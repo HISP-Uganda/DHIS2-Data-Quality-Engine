@@ -2,6 +2,30 @@ import fetch from 'node-fetch'
 import { addDQRunStats } from './statsStore'
 import { notificationManager } from './notifications/notificationManager'
 
+// Helper function to add timeout to fetch requests
+async function fetchWithTimeout(url: string, options: any = {}, timeoutMs: number = 120000) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+        console.log(`[Engine] ⏱️ Fetch timeout reached for ${url}`)
+        controller.abort()
+    }, timeoutMs)
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        })
+        clearTimeout(timeout)
+        return response
+    } catch (error: any) {
+        clearTimeout(timeout)
+        if (error.name === 'AbortError') {
+            throw new Error(`Request to ${url} timed out after ${timeoutMs / 1000} seconds`)
+        }
+        throw error
+    }
+}
+
 export interface RunDQParams {
     sourceUrl: string
     sourceUser: string
@@ -9,7 +33,7 @@ export interface RunDQParams {
     dataElements: string[]
     datasetDC: string
     orgUnit: string | string[]
-    period: string
+    period: string | string[]
 
     destinationUrl?: string
     destinationUser?: string
@@ -64,6 +88,10 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
         destinationOrgUnit,
         dataElementMapping,
     } = params
+
+    // Ensure period is always a single string for processing
+    // If array is passed, use the first element
+    const singlePeriod = Array.isArray(period) ? period[0] : period
 
     const baseSrc = sourceUrl.replace(/\/$/, '')
     const authSrc = Buffer.from(`${sourceUser}:${sourcePass}`).toString('base64')
@@ -128,16 +156,16 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
 
 
         currentStep++
-        onProgress?.(`Fetching raw data values for period ${period}...`, currentStep, totalSteps)
+        onProgress?.(`Fetching raw data values for period ${singlePeriod}...`, currentStep, totalSteps)
         console.log(`[Engine] Step ${currentStep}/${totalSteps}: Fetching raw data values`)
 
 
-        console.log(`[Engine] → Original period format: "${period}"`)
-        let formattedPeriod = period
+        console.log(`[Engine] → Original period format: "${singlePeriod}"`)
+        let formattedPeriod = singlePeriod
 
 
-        if (!/^\d{6}$/.test(period) && period.includes(' ')) {
-            console.log(`[Engine] ⚠️ Period "${period}" doesn't appear to be in YYYYMM format`)
+        if (!/^\d{6}$/.test(singlePeriod) && singlePeriod.includes(' ')) {
+            console.log(`[Engine] ⚠️ Period "${singlePeriod}" doesn't appear to be in YYYYMM format`)
             console.log(`[Engine] ⚠️ DHIS2 typically expects periods like "202506" not "June 2025"`)
 
         }
@@ -160,9 +188,9 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
 
             console.log(`[Engine] → GET ${dataValueUrl.toString()} (org unit: ${singleOrgUnit})`)
 
-            const singleDataResp = await fetch(dataValueUrl.toString(), {
+            const singleDataResp = await fetchWithTimeout(dataValueUrl.toString(), {
                 headers: { Authorization: `Basic ${authSrc}` },
-            })
+            }, 120000) // 2 minute timeout
 
             if (singleDataResp.ok) {
                 const singleDataValueSetsResponse = (await singleDataResp.json()) as DataValueSetsResponse
@@ -232,24 +260,9 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
                 const datasetName = datasetNames.get(datasetDC) || datasetDC
 
 
-                const detailedError = [
-                    `No data found for the specified criteria:`,
-                    `• Dataset: ${datasetName}`,
-                    `• Organization Unit(s): ${orgUnitDisplayNames}`,
-                    `• Period: ${periodName}`,
-                    `• Data Elements: ${dataElements.length} selected`,
-                    ``,
-                    `Possible reasons:`,
-                    `1. Data has not been entered for this period`,
-                    `2. Data entry forms are not completed`,
-                    `3. Data has not been approved/locked`,
-                    `4. The selected data elements are not part of this dataset`,
-                    `5. User lacks access permissions for the selected org units`,
-                    ``,
-                    `Please verify in DHIS2 that data exists for these criteria.`
-                ].join('\n')
+                const simpleError = `Source system does not have data for ${orgUnitDisplayNames} in ${periodName} for the selected data elements.`
 
-                throw new Error(detailedError)
+                throw new Error(simpleError)
             }
 
 
@@ -373,7 +386,7 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
                         const mappedDataElement = dataElementMapping[dv.dataElement]
                         destinationDataValues.push({
                             dataElement: mappedDataElement,
-                            period: period,
+                            period: singlePeriod,
                             orgUnit: destOu,
                             value: dv.value
                         })
@@ -430,7 +443,7 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
 
         addDQRunStats({
             orgUnit: Array.isArray(orgUnit) ? orgUnit.join(',') : orgUnit,
-            period,
+            period: singlePeriod,
             sourceDataElements: dataElements.length,
             destinationDataElements: destinationResult?.posted || 0,
             validationErrors: totalIssues,
@@ -445,7 +458,7 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
             summary: {
                 recordsProcessed: dqResults.length,
                 issuesFound: totalIssues,
-                period,
+                period: singlePeriod,
                 orgUnit: Array.isArray(orgUnit) ? orgUnit.join(',') : orgUnit,
                 dataElements: dataElements.length,
                 destinationPosted: destinationResult?.posted || 0
@@ -473,7 +486,7 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
 
         addDQRunStats({
             orgUnit: Array.isArray(orgUnit) ? orgUnit.join(',') : orgUnit,
-            period,
+            period: singlePeriod,
             sourceDataElements: dataElements.length,
             destinationDataElements: 0,
             validationErrors: 0,
@@ -490,7 +503,7 @@ export async function runDQ(params: RunDQParams, onProgress?: ProgressCallback) 
                 summary: {
                     recordsProcessed: 0,
                     issuesFound: 0,
-                    period,
+                    period: singlePeriod,
                     orgUnit: Array.isArray(orgUnit) ? orgUnit.join(',') : orgUnit,
                     dataElements: dataElements.length,
                     destinationPosted: 0

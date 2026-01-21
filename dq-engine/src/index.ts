@@ -28,6 +28,7 @@ import { facilityStore } from './notifications/facilityStore'
 import { emailService } from './notifications/emailService'
 import { whatsappService } from './notifications/whatsappService'
 import { smsService } from './notifications/smsService'
+import * as newSmsService from './services/smsService'
 
 // Phase 3: Performance & Scalability imports
 import { cacheService } from './cache/cacheService'
@@ -431,13 +432,38 @@ app.post('/api/get-dataset-data', async (req, res) => {
   console.log('[DQ API] POST /api/get-dataset-data')
   const { sourceUrl, sourceUser, sourcePass, datasetId, orgUnitId, period } = req.body
 
+  console.log('[DQ API] Request parameters:', {
+    sourceUrl,
+    sourceUser,
+    datasetId,
+    orgUnitId,
+    period,
+    hasPassword: !!sourcePass
+  })
+
   try {
     const baseSrc = sourceUrl.replace(/\/$/, '')
     const authSrc = Buffer.from(`${sourceUser}:${sourcePass}`).toString('base64')
+    const fetchUrl = `${baseSrc}/api/dataValueSets.json?dataSet=${datasetId}&orgUnit=${orgUnitId}&period=${period}&paging=false`
 
-    const resp = await fetch(`${baseSrc}/api/dataValueSets.json?dataSet=${datasetId}&orgUnit=${orgUnitId}&period=${period}&paging=false`, {
+    console.log('[DQ API] Fetching from DHIS2:', fetchUrl)
+    const startTime = Date.now()
+
+    // Add timeout to prevent hanging
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+      console.log('[DQ API] ⏱️ Fetch timeout reached (120s)')
+      controller.abort()
+    }, 120000) // 2 minute timeout
+
+    const resp = await fetch(fetchUrl, {
       headers: { Authorization: `Basic ${authSrc}` },
+      signal: controller.signal
     })
+
+    clearTimeout(timeout)
+    const duration = Date.now() - startTime
+    console.log(`[DQ API] DHIS2 responded in ${duration}ms with status: ${resp.status}`)
 
     if (!resp.ok) {
 
@@ -453,7 +479,21 @@ app.post('/api/get-dataset-data', async (req, res) => {
   } catch (err: any) {
     console.error('[DQ API] get-dataset-data error:', err)
 
-    res.json({ dataValues: [] })
+    // Handle timeout specifically
+    if (err.name === 'AbortError') {
+      console.error('[DQ API] ❌ Request timed out after 2 minutes')
+      res.status(504).json({
+        error: 'Request to DHIS2 server timed out after 2 minutes. Please check if the DHIS2 server is responsive.',
+        dataValues: []
+      })
+      return
+    }
+
+    // Return error info instead of silently returning empty array
+    res.status(500).json({
+      error: err.message || 'Failed to fetch dataset data',
+      dataValues: []
+    })
   }
 })
 
@@ -466,7 +506,7 @@ app.post('/api/get-dataset-elements', async (req, res) => {
     const baseSrc = sourceUrl.replace(/\/$/, '')
     const authSrc = Buffer.from(`${sourceUser}:${sourcePass}`).toString('base64')
 
-    const resp = await fetch(`${baseSrc}/api/dataSets/${datasetId}.json?fields=dataSetElements[dataElement[id,displayName,formName]]`, {
+    const resp = await fetch(`${baseSrc}/api/dataSets/${datasetId}.json?fields=id,displayName,name,dataSetElements[dataElement[id,displayName,formName]]`, {
       headers: { Authorization: `Basic ${authSrc}` },
     })
 
@@ -475,6 +515,7 @@ app.post('/api/get-dataset-elements', async (req, res) => {
     }
 
     const data = await resp.json()
+    console.log(`[DQ API] Fetched dataset: ${data.displayName || data.name || datasetId}`)
     res.json(data)
 
   } catch (err: any) {
@@ -786,6 +827,42 @@ app.get('/api/comparisons', (_req, res) => {
   }
 })
 
+// Send comparison notifications
+app.post('/api/send-comparison-notifications', (req, res) => {
+  console.log('[DQ API] POST /api/send-comparison-notifications')
+
+  const sendNotifications = async () => {
+    try {
+      const { orgUnit, comparisonResults } = req.body
+
+      if (!orgUnit || !comparisonResults) {
+        return res.status(400).json({ error: 'Missing required fields: orgUnit, comparisonResults' })
+      }
+
+      // Import notification manager
+      const { notificationManager } = await import('./notifications/notificationManager')
+
+      // Send notifications
+      const result = await notificationManager.sendComparisonNotifications(orgUnit, comparisonResults)
+
+      console.log('[DQ API] Notifications sent:', {
+        facilitiesNotified: result.facilitiesNotified.length,
+        emailsSent: result.emailsSent,
+        whatsappSent: result.whatsappSent,
+        smsSent: result.smsSent,
+        smsFailed: result.smsFailed
+      })
+
+      res.json(result)
+    } catch (err: any) {
+      console.error('[DQ API] send-comparison-notifications error:', err)
+      res.status(500).json({ error: err.message })
+    }
+  }
+
+  sendNotifications()
+})
+
 app.post('/api/reset-stats', (_req, res) => {
   console.log('[DQ API] POST /api/reset-stats')
   try {
@@ -793,6 +870,77 @@ app.post('/api/reset-stats', (_req, res) => {
     res.json({ success: true, message: 'Statistics reset successfully' })
   } catch (err: any) {
     console.error('[DQ API] reset-stats error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Org Units Tree endpoint - fetch flat list from DHIS2 and build tree
+app.get('/api/org-units/tree', async (_req, res) => {
+  console.log('[DQ API] GET /api/org-units/tree')
+  try {
+    const dhis2Url = process.env.DHIS2_URL || 'https://dqas.hispuganda.org/dqa360'
+    const username = process.env.DHIS2_USERNAME || 'admin'
+    const password = process.env.DHIS2_PASSWORD || 'district'
+
+    const auth = Buffer.from(`${username}:${password}`).toString('base64')
+
+    // Fetch flat list of ALL org units with parent info
+    const response = await fetch(
+      `${dhis2Url}/api/organisationUnits.json?fields=id,displayName,level,path,parent[id]&paging=false`,
+      {
+        headers: {
+          'Authorization': `Basic ${auth}`,
+          'Accept': 'application/json'
+        }
+      }
+    )
+
+    if (!response.ok) {
+      const errorBody = await response.text()
+      console.error('[DQ API] DHIS2 error:', response.status, errorBody)
+      throw new Error(`DHIS2 API error: ${response.status} - ${errorBody}`)
+    }
+
+    const data: any = await response.json()
+    const orgUnits = data.organisationUnits || []
+
+    console.log(`[DQ API] Fetched ${orgUnits.length} org units from DHIS2`)
+
+    // Build tree structure from flat list
+    const orgUnitMap = new Map()
+    const rootNodes: any[] = []
+
+    // First pass: create all nodes
+    orgUnits.forEach((unit: any) => {
+      orgUnitMap.set(unit.id, {
+        id: unit.id,
+        key: unit.id,
+        value: unit.id,
+        title: unit.displayName,
+        level: unit.level,
+        children: []
+      })
+    })
+
+    // Second pass: build tree hierarchy
+    orgUnits.forEach((unit: any) => {
+      const node = orgUnitMap.get(unit.id)
+      if (unit.parent && unit.parent.id) {
+        // Has parent - add to parent's children
+        const parent = orgUnitMap.get(unit.parent.id)
+        if (parent) {
+          parent.children.push(node)
+        }
+      } else {
+        // No parent - it's a root node
+        rootNodes.push(node)
+      }
+    })
+
+    console.log(`[DQ API] Built tree with ${rootNodes.length} root nodes`)
+    res.json(rootNodes)
+  } catch (err: any) {
+    console.error('[DQ API] org-units/tree error:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -928,6 +1076,196 @@ app.post('/api/notifications/test-dq', async (req, res) => {
     res.json({ success: true, result: notificationResult })
   } catch (err: any) {
     console.error('[DQ API] test dq notification error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================================
+// SMS Notification Endpoints (DHIS2 + D-Mark Integration)
+// ============================================================================
+
+// Send SMS alert for comparison results
+app.post('/api/sms/send-dq-alert', async (req, res) => {
+  console.log('[DQ API] POST /api/sms/send-dq-alert')
+  try {
+    const { phone, facilityName, period, totalRecords, validRecords, mismatchedRecords, missingRecords, outOfRangeRecords, provider } = req.body
+
+    if (!phone || !facilityName) {
+      res.status(400).json({ error: 'Phone number and facility name are required' })
+      return
+    }
+
+    const result = await newSmsService.sendDQAlertSMS(
+      phone,
+      {
+        facilityName,
+        period,
+        totalRecords,
+        validRecords,
+        mismatchedRecords,
+        missingRecords,
+        outOfRangeRecords,
+        dashboardUrl: process.env.DASHBOARD_URL
+      },
+      provider || 'dhis2'
+    )
+
+    res.json(result)
+  } catch (err: any) {
+    console.error('[DQ API] send DQ alert SMS error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Send custom SMS
+app.post('/api/sms/send', async (req, res) => {
+  console.log('[DQ API] POST /api/sms/send')
+  try {
+    const { recipient, message, provider } = req.body
+
+    if (!recipient || !message) {
+      res.status(400).json({ error: 'Recipient and message are required' })
+      return
+    }
+
+    const result = await newSmsService.sendSMS(
+      { recipient, message },
+      provider || 'dhis2'
+    )
+
+    res.json(result)
+  } catch (err: any) {
+    console.error('[DQ API] send SMS error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Send bulk SMS
+app.post('/api/sms/send-bulk', async (req, res) => {
+  console.log('[DQ API] POST /api/sms/send-bulk')
+  try {
+    const { recipients, provider } = req.body
+
+    if (!recipients || !Array.isArray(recipients)) {
+      res.status(400).json({ error: 'Recipients array is required' })
+      return
+    }
+
+    const results = await newSmsService.sendBulkSMS(recipients, provider || 'dhis2')
+
+    res.json({
+      success: true,
+      total: results.length,
+      successful: results.filter(r => r.success).length,
+      failed: results.filter(r => !r.success).length,
+      results
+    })
+  } catch (err: any) {
+    console.error('[DQ API] send bulk SMS error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Test SMS configuration
+app.post('/api/sms/test', async (req, res) => {
+  console.log('[DQ API] POST /api/sms/test')
+  try {
+    const { testPhone } = req.body
+
+    if (!testPhone) {
+      res.status(400).json({ error: 'Test phone number is required' })
+      return
+    }
+
+    const results = await newSmsService.testSMSConfiguration(testPhone)
+
+    res.json({
+      success: true,
+      testPhone,
+      results
+    })
+  } catch (err: any) {
+    console.error('[DQ API] test SMS error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Get SMS notification queue status
+app.get('/api/sms/queue', (req, res) => {
+  console.log('[DQ API] GET /api/sms/queue')
+  try {
+    const db = require('./db/connection').getDb()
+    const queue = db.prepare(`
+      SELECT * FROM notification_queue
+      WHERE notification_type = 'sms'
+      ORDER BY created_at DESC
+      LIMIT 100
+    `).all()
+
+    const stats = db.prepare(`
+      SELECT
+        status,
+        COUNT(*) as count
+      FROM notification_queue
+      WHERE notification_type = 'sms'
+      GROUP BY status
+    `).all()
+
+    res.json({
+      queue,
+      stats
+    })
+  } catch (err: any) {
+    console.error('[DQ API] get SMS queue error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Update facility SMS preferences
+app.put('/api/facilities/:id/sms', (req, res) => {
+  console.log(`[DQ API] PUT /api/facilities/${req.params.id}/sms`)
+  try {
+    const { id } = req.params
+    const { phone, notify_sms } = req.body
+
+    const db = require('./db/connection').getDb()
+
+    const updateFields = []
+    const params: any = {}
+
+    if (phone !== undefined) {
+      updateFields.push('phone = $phone')
+      params.phone = phone
+    }
+
+    if (notify_sms !== undefined) {
+      updateFields.push('notify_sms = $notify_sms')
+      params.notify_sms = notify_sms ? 1 : 0
+    }
+
+    if (updateFields.length === 0) {
+      res.status(400).json({ error: 'No fields to update' })
+      return
+    }
+
+    params.id = id
+
+    const stmt = db.prepare(`
+      UPDATE facilities
+      SET ${updateFields.join(', ')}, updated_at = datetime('now')
+      WHERE dhis2_org_unit_id = $id
+    `)
+
+    const result = stmt.run(params)
+
+    if (result.changes === 0) {
+      res.status(404).json({ error: 'Facility not found' })
+      return
+    }
+
+    res.json({ success: true, message: 'Facility SMS settings updated' })
+  } catch (err: any) {
+    console.error('[DQ API] update facility SMS error:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -1138,7 +1476,7 @@ app.post('/api/comparison-configs/:id/run', async (req, res) => {
       return
     }
 
-    if (!orgUnit || !period) {
+    if (!orgUnit || !period || (Array.isArray(period) && period.length === 0)) {
       res.status(400).json({ error: 'Missing required fields: orgUnit, period' })
       return
     }

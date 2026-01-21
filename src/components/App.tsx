@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import TopNav, { Tab } from './TopNav'
-import DashboardView from './DashboardView'
+import ImprovedDashboard from './ImprovedDashboard'
 import DQEngineView from './DQEngineView'
 import MetadataAssessmentView from './MetadataAssessmentView'
 
@@ -9,7 +9,7 @@ const App: React.FC = () => {
     return (
         <>
             <TopNav tab={tab} setTab={setTab} />
-            {tab === 'dashboard' && <DashboardView />}
+            {tab === 'dashboard' && <ImprovedDashboard />}
             {tab === 'dq' && <DQEngineView />}
             {tab === 'metadata' && <MetadataAssessmentView />}
         </>

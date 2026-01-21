@@ -8,9 +8,10 @@ import {
     Card, CardBody, CircularProgress, Accordion, AccordionItem, AccordionButton,
     AccordionPanel, AccordionIcon, IconButton, Tooltip,
 } from '@chakra-ui/react'
-import { FaCheck, FaExclamationTriangle, FaSearch, FaDownload, FaRedo, FaPlay, FaExclamationCircle, FaQuestionCircle, FaPlus, FaTrash, FaMagic, FaSave, FaCog, FaBookmark } from 'react-icons/fa'
+import { FaCheck, FaExclamationTriangle, FaSearch, FaDownload, FaRedo, FaPlay, FaExclamationCircle, FaQuestionCircle, FaPlus, FaTrash, FaMagic, FaSave, FaCog, FaBookmark, FaSms, FaPaperPlane } from 'react-icons/fa'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { saveConfiguration, getSavedConfigurations, runSavedConfiguration, type SavedConfigurationSummary, type OrgUnitTreeNode } from '../api'
+import ProgressTracker, { ProgressStep } from './ProgressTracker'
 
 interface Dataset {
     id: string
@@ -64,8 +65,8 @@ interface DataComparisonModalProps {
     selectedSourceOrgUnits: string[]
     selectedSourceOrgNames: string[]
     selectedDataElements: string[]
-    period: string
-    
+    period: string | string[]
+
     // Destination system data from DQ form
     destinationUrl: string
     destinationUser: string
@@ -781,21 +782,31 @@ const performDatasetComparison = async (
         console.log('Quick Run: Creating dataset details from data element groups')
         // For Quick Run, create dataset details directly from data element groups
         for (const datasetId of selectedDatasetIds) {
-            // Get dataset name from first group that has this dataset
-            let datasetDisplayName = `Dataset ${datasetId}` // Better fallback than UID
+            // Try to get actual dataset name from DHIS2 API first
+            let datasetDisplayName = `Dataset ${datasetId}` // Fallback
             const dataSetElements: any[] = []
-            
+
+            // Fetch the actual dataset information from DHIS2
+            try {
+                const authDest = btoa(`${destinationUser}:${destinationPass}`)
+                const datasetResponse = await fetch(
+                    `${destinationUrl}/api/dataSets/${datasetId}.json?fields=id,displayName,name`,
+                    { headers: { 'Authorization': `Basic ${authDest}` } }
+                )
+                if (datasetResponse.ok) {
+                    const datasetInfo = await datasetResponse.json()
+                    datasetDisplayName = datasetInfo.displayName || datasetInfo.name || datasetDisplayName
+                    console.log(`[Quick Run] ✓ Fetched dataset name from API: ${datasetDisplayName}`)
+                } else {
+                    console.warn(`[Quick Run] Failed to fetch dataset ${datasetId}, status: ${datasetResponse.status}`)
+                }
+            } catch (error) {
+                console.warn(`[Quick Run] Error fetching dataset ${datasetId}:`, error)
+            }
+
             for (const group of dataElementGroups) {
                 const element = group.elements[datasetId]
                 if (element) {
-                    // Use the dataset name from the element, try multiple fields
-                    if (element.datasetName && element.datasetName !== datasetId) {
-                        datasetDisplayName = element.datasetName
-                    } else if (element.displayName && element.displayName !== datasetId) {
-                        datasetDisplayName = element.displayName
-                    } else if (element.name && element.name !== datasetId) {
-                        datasetDisplayName = element.name
-                    }
                     
                     dataSetElements.push({
                         dataElement: {
@@ -867,6 +878,14 @@ const performDatasetComparison = async (
             console.log(`[DataComparisonModal] CRITICAL: About to query ${destinationUrl} for data - this should match the working manual flow exactly`)
             console.log(`[DataComparisonModal] CRITICAL: If this is Quick Run and returns 0 data, the saved config has wrong server/dataset combination`)
             console.log(`[DataComparisonModal] CRITICAL: Manual flow that works should use same server=${destinationUrl}, dataset=${dataset.id}, orgUnit=${orgUnit}, period=${period}`)
+
+            // Add timeout to prevent hanging
+            const controller = new AbortController()
+            const timeout = setTimeout(() => {
+                console.log('[DataComparisonModal] ⏱️ Fetch timeout reached (3 minutes)')
+                controller.abort()
+            }, 180000) // 3 minute timeout
+
             // Use backend API to fetch data values through proper authentication
             const response = await fetch(`${getApiBaseUrl()}/api/get-dataset-data`, {
                 method: 'POST',
@@ -878,9 +897,12 @@ const performDatasetComparison = async (
                     datasetId: dataset.id,
                     orgUnitId: orgUnit,
                     period: period
-                })
+                }),
+                signal: controller.signal
             })
-            
+
+            clearTimeout(timeout)
+
             if (response.ok) {
                 const data = await response.json()
                 const dataValues = data.dataValues || []
@@ -893,7 +915,13 @@ const performDatasetComparison = async (
                 console.log(`[DataComparisonModal] HTTP error ${response.status} for dataset ${dataset.id}`)
                 dataValuesByDataset[dataset.id] = []
             }
-        } catch (error) {
+        } catch (error: any) {
+            // Handle timeout specifically
+            if (error.name === 'AbortError') {
+                console.error(`[DataComparisonModal] Request timed out after 3 minutes for dataset ${dataset.displayName}`)
+                throw new Error(`Request timed out after 3 minutes while fetching data for ${dataset.displayName}. The DHIS2 server may be slow or unresponsive.`)
+            }
+
             console.error(`Error fetching data for dataset ${dataset.displayName}:`, error)
             dataValuesByDataset[dataset.id] = []
         }
@@ -1090,7 +1118,7 @@ export default function DataComparisonModal({
     const [availableDataElements, setAvailableDataElements] = useState<DataElementDetail[]>([])
     const [showMappingInterface, setShowMappingInterface] = useState(false)
     const [datasetDetails, setDatasetDetails] = useState<any[]>([])
-    
+
     // Configuration management state
     const [showSaveConfig, setShowSaveConfig] = useState(false)
     const [configName, setConfigName] = useState('')
@@ -1098,6 +1126,12 @@ export default function DataComparisonModal({
     const [showLoadConfig, setShowLoadConfig] = useState(false)
     const [selectedConfigId, setSelectedConfigId] = useState<string | null>(null)
     const [showStep2SaveModal, setShowStep2SaveModal] = useState(false)
+
+    // Progress tracker state
+    const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([])
+    const [currentStepIndex, setCurrentStepIndex] = useState(0)
+    const [showProgressTracker, setShowProgressTracker] = useState(false)
+    const [progressError, setProgressError] = useState('')
 
     // Query to fetch available datasets (skip for Quick Run to avoid server errors)
     const { data: availableDatasets = [], isLoading: loadingDatasets, error: datasetsError } = useQuery({
@@ -1118,7 +1152,8 @@ export default function DataComparisonModal({
             return fetchAvailableDatasets(destinationUrl, destinationUser, destinationPass)
         },
         enabled: isOpen && !isQuickRun && Boolean(destinationUrl && destinationUser && destinationPass), // Only fetch when we have all required params
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0, // Always fetch fresh data to ensure latest dataset changes are reflected
+        refetchOnMount: true, // Refetch when modal opens
     })
 
     // Query to fetch saved configurations
@@ -1126,12 +1161,25 @@ export default function DataComparisonModal({
         queryKey: ['saved-configurations'],
         queryFn: getSavedConfigurations,
         enabled: isOpen,
-        staleTime: 2 * 60 * 1000,
+        staleTime: 0, // Always fetch fresh configurations
+        refetchOnMount: true, // Refetch when modal opens
     })
 
     // Mutation for performing comparison
     const comparisonMutation = useMutation({
         mutationFn: async (datasetIds: string[]) => {
+            // Initialize progress tracker
+            setProgressError('')
+            setShowProgressTracker(true)
+            setProgressSteps([
+                { label: 'Preparing dataset information', progress: 0, status: 'pending' },
+                { label: 'Fetching data values from DHIS2', progress: 0, status: 'pending' },
+                { label: 'Analyzing data elements', progress: 0, status: 'pending' },
+                { label: 'Comparing values across datasets', progress: 0, status: 'pending' },
+                { label: 'Finalizing results', progress: 0, status: 'pending' },
+            ])
+            setCurrentStepIndex(0)
+
             // Get org unit name from selectedDestOrgNames based on destinationOrgUnit ID
             const orgUnitIndex = selectedDestOrgUnits.findIndex(id => id === destinationOrgUnit)
             const orgUnitName = orgUnitIndex >= 0 && selectedDestOrgNames[orgUnitIndex]
@@ -1150,13 +1198,26 @@ export default function DataComparisonModal({
                 (step: string, progressValue: number) => {
                     setCurrentStep(step)
                     setProgress(progressValue)
+
+                    // Update progress tracker steps
+                    const stepIndex = Math.floor((progressValue / 100) * 5)
+                    setCurrentStepIndex(Math.min(stepIndex, 4))
+                    setProgressSteps(prev => prev.map((s, i) => {
+                        if (i < stepIndex) return { ...s, status: 'completed', progress: 100 }
+                        if (i === stepIndex) return { ...s, status: 'active', progress: ((progressValue % 20) / 20) * 100 }
+                        return s
+                    }))
                 },
                 isQuickRun // Pass Quick Run flag to use saved data element groups
             )
         },
         onSuccess: (data) => {
             setComparisonResults(data)
-            
+
+            // Mark all steps as completed
+            setProgressSteps(prev => prev.map(s => ({ ...s, status: 'completed', progress: 100 })))
+            setCurrentStepIndex(5)
+
             // Track comparison statistics
             fetch(`${getApiBaseUrl()}/api/comparison-stats`, {
                 method: 'POST',
@@ -1171,17 +1232,68 @@ export default function DataComparisonModal({
                     consensusFound: data.summary.validRecords // Assuming valid means consensus found
                 })
             }).catch(err => console.warn('Failed to track comparison stats:', err))
-            
+
+            // Hide progress tracker after 2 seconds
+            setTimeout(() => setShowProgressTracker(false), 2000)
+        },
+        onError: (error: Error) => {
+            setProgressError(error.message)
+            // Keep progress tracker visible to show error
+        }
+    })
+
+    // Mutation for sending notifications
+    const sendNotificationsMutation = useMutation({
+        mutationFn: async () => {
+            if (!comparisonResults) {
+                throw new Error('No comparison results available')
+            }
+
+            const response = await fetch(`${getApiBaseUrl()}/api/send-comparison-notifications`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    orgUnit: destinationOrgUnit,
+                    comparisonResults: {
+                        datasets: comparisonResults.datasets,
+                        comparisonResults: comparisonResults.comparisonResults.map((r: any) => ({
+                            dataElement: r.dataElementGroup || r.logicalDataElement,
+                            dataElementName: r.logicalDataElement,
+                            orgUnit: destinationOrgUnit,
+                            orgUnitName: selectedDestOrgNames[selectedDestOrgUnits.indexOf(destinationOrgUnit)] || destinationOrgUnit,
+                            period: r.period,
+                            status: r.status === 'valid' ? 'match' : r.status === 'mismatch' ? 'mismatch' : 'missing',
+                            conflicts: r.variance ? [`Variance: ${r.variance}`] : []
+                        })),
+                        summary: {
+                            totalRecords: comparisonResults.summary.totalRecords,
+                            matchingRecords: comparisonResults.summary.validRecords,
+                            mismatchedRecords: comparisonResults.summary.mismatchedRecords,
+                            missingRecords: comparisonResults.summary.missingRecords,
+                            outOfRangeRecords: comparisonResults.summary.outOfRangeRecords || 0
+                        }
+                    }
+                })
+            })
+
+            if (!response.ok) {
+                const errorText = await response.text()
+                throw new Error(`Failed to send notifications: ${errorText}`)
+            }
+
+            return response.json()
+        },
+        onSuccess: (data) => {
             toast({
-                title: 'Comparison Complete!',
-                description: `Compared ${data.summary.totalRecords} data elements: ${data.summary.validRecords} valid, ${data.summary.mismatchedRecords} mismatched, ${data.summary.missingRecords} missing, ${data.summary.outOfRangeRecords} out of range`,
+                title: 'Notifications Sent!',
+                description: `Sent to ${data.facilitiesNotified?.length || 0} facilities: ${data.smsSent || 0} SMS, ${data.emailsSent || 0} emails, ${data.whatsappSent || 0} WhatsApp`,
                 status: 'success',
-                duration: 4000
+                duration: 5000
             })
         },
         onError: (error: Error) => {
             toast({
-                title: 'Comparison Failed',
+                title: 'Notification Failed',
                 description: error.message,
                 status: 'error',
                 duration: 5000
@@ -1323,21 +1435,79 @@ export default function DataComparisonModal({
     
     // Create proper datasets for Quick Run with real names from data element groups
     const datasetsToShow = useMemo(() => {
-        if (isQuickRun && quickRunSelectedDatasets?.length && quickRunDataElementGroups?.length) {
-            return quickRunSelectedDatasets.map(datasetId => {
-                // Find the real dataset name from the first data element group
+        if (isQuickRun && quickRunSelectedDatasets?.length) {
+            // Log the structure to understand what we're working with
+            if (quickRunDataElementGroups?.length) {
                 const firstGroup = quickRunDataElementGroups[0]
-                const element = firstGroup?.elements?.[datasetId]
-                const displayName = element?.datasetName || datasetId
-                
+                console.log('[Quick Run] Data element group structure:', {
+                    groupId: firstGroup.id,
+                    groupName: firstGroup.name,
+                    elementKeys: Object.keys(firstGroup.elements || {}),
+                    firstElementSample: firstGroup.elements ? firstGroup.elements[Object.keys(firstGroup.elements)[0]] : null
+                })
+            }
+
+            console.log('[Quick Run] Building datasetsToShow from:', {
+                quickRunSelectedDatasets,
+                hasDataElementGroups: !!quickRunDataElementGroups?.length,
+                hasDatasetDetails: !!datasetDetails.length
+            })
+
+            return quickRunSelectedDatasets.map(datasetId => {
+                // Try to find the dataset name from multiple sources
+
+                // 1. Check if it's in datasetDetails (fetched from API)
+                const fromDetails = datasetDetails.find(ds => ds.id === datasetId)
+                if (fromDetails?.displayName && fromDetails.displayName !== datasetId) {
+                    console.log(`[Quick Run] ✓ Found dataset ${datasetId} name in datasetDetails: ${fromDetails.displayName}`)
+                    return {
+                        id: datasetId,
+                        displayName: fromDetails.displayName
+                    }
+                }
+
+                // 2. Check ALL data element groups for dataset name (not just first group)
+                if (quickRunDataElementGroups?.length) {
+                    for (const group of quickRunDataElementGroups) {
+                        const element = group?.elements?.[datasetId]
+                        if (element) {
+                            console.log(`[Quick Run] Found element for dataset ${datasetId} in group ${group.id}:`, element)
+                            if (element.datasetName && element.datasetName !== datasetId) {
+                                console.log(`[Quick Run] ✓ Using datasetName: ${element.datasetName}`)
+                                return {
+                                    id: datasetId,
+                                    displayName: element.datasetName
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Fallback to dataset ID
+                console.log(`[Quick Run] ✗ No name found for dataset ${datasetId}, using ID as fallback`)
                 return {
                     id: datasetId,
-                    displayName: displayName === datasetId ? `Dataset ${datasetId}` : displayName
+                    displayName: datasetId
                 }
             })
         }
         return availableDatasets
-    }, [isQuickRun, quickRunSelectedDatasets, quickRunDataElementGroups, availableDatasets])
+    }, [isQuickRun, quickRunSelectedDatasets, quickRunDataElementGroups, availableDatasets, datasetDetails])
+
+    // Fetch dataset details for Quick Run to get proper dataset names
+    useEffect(() => {
+        console.log('[Quick Run] useEffect check:', {
+            isQuickRun,
+            hasQuickRunDatasets: !!quickRunSelectedDatasets?.length,
+            hasDestinationUrl: !!destinationUrl,
+            hasDestinationUser: !!destinationUser,
+            hasDestinationPass: !!destinationPass
+        })
+
+        if (isQuickRun && quickRunSelectedDatasets?.length && destinationUrl && destinationUser && destinationPass) {
+            fetchDatasetDetailsForQuickRun()
+        }
+    }, [isQuickRun, quickRunSelectedDatasets, destinationUrl, destinationUser, destinationPass])
 
     // Normal data element mapping logic (skip for Quick Run since we load pre-saved groups)
     useEffect(() => {
@@ -1353,7 +1523,58 @@ export default function DataComparisonModal({
     //         setShowStep2SaveModal(true)
     //     }
     // }, [showMappingInterface, dataElementGroups.length, isQuickRun])
-    
+
+    const fetchDatasetDetailsForQuickRun = async () => {
+        try {
+            console.log('[Quick Run] Fetching dataset details for dataset names...', {
+                quickRunSelectedDatasets,
+                hasDestUrl: !!destinationUrl,
+                hasDestUser: !!destinationUser,
+                hasDestPass: !!destinationPass
+            })
+
+            if (!destinationUrl || !destinationUser || !destinationPass) {
+                console.warn('[Quick Run] Missing credentials, cannot fetch dataset details')
+                return
+            }
+
+            const details = []
+            for (const datasetId of quickRunSelectedDatasets || []) {
+                try {
+                    const response = await fetch(`${getApiBaseUrl()}/api/get-dataset-elements`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            sourceUrl: destinationUrl,
+                            sourceUser: destinationUser,
+                            sourcePass: destinationPass,
+                            datasetId: datasetId
+                        })
+                    })
+                    if (response.ok) {
+                        const data = await response.json()
+                        const dataset = {
+                            id: datasetId,
+                            displayName: data.displayName || datasetId,
+                            dataSetElements: data.dataSetElements || []
+                        }
+                        details.push(dataset)
+                        console.log(`[Quick Run] ✓ Fetched dataset: ${dataset.displayName}`)
+                    } else {
+                        console.error(`[Quick Run] API error fetching dataset ${datasetId}:`, response.status)
+                    }
+                } catch (error) {
+                    console.error(`[Quick Run] Error fetching dataset ${datasetId}:`, error)
+                }
+            }
+
+            setDatasetDetails(details)
+            console.log(`[Quick Run] Loaded ${details.length} dataset details`)
+        } catch (error) {
+            console.error('[Quick Run] Error fetching dataset details:', error)
+        }
+    }
+
     const fetchDatasetDetailsAndCreateMapping = async () => {
         try {
             const details = []
@@ -1390,23 +1611,11 @@ export default function DataComparisonModal({
             const autoGroups = createAutomaticMapping(details, dataElementMapping, selectedDataElements)
             setDataElementGroups(autoGroups)
 
-            // Show success notification about automatic mapping
+            // Log auto-mapping completion (removed toast notification)
             if (autoGroups.length > 0) {
-                toast({
-                    title: '✨ Auto-Mapping Complete!',
-                    description: `Automatically created ${autoGroups.length} data element groups based on name similarity. Review and adjust as needed.`,
-                    status: 'success',
-                    duration: 5000,
-                    isClosable: true,
-                })
+                console.log(`Auto-mapping complete: Created ${autoGroups.length} data element groups`)
             } else {
-                toast({
-                    title: 'No automatic mappings found',
-                    description: 'You can manually create groups using the "Add Group" button.',
-                    status: 'info',
-                    duration: 4000,
-                    isClosable: true,
-                })
+                console.log('No automatic mappings found, user can create groups manually')
             }
 
             // Collect all available data elements
@@ -1531,30 +1740,10 @@ export default function DataComparisonModal({
             const autoGroups = createAutomaticMapping(datasetDetails, dataElementMapping, selectedDataElements)
             setDataElementGroups(autoGroups)
 
-            // Count mapped vs selected vs predefined groups
-            const mappedCount = autoGroups.filter(g => g.id.startsWith('mapped_')).length
-            const selectedCount = autoGroups.filter(g => g.id.startsWith('selected_')).length
-            const predefinedCount = autoGroups.filter(g => g.id.startsWith('predefined_')).length
-
-            const descParts = []
-            if (mappedCount > 0) descParts.push(`${mappedCount} from mappings`)
-            if (selectedCount > 0) descParts.push(`${selectedCount} from selections`)
-            if (predefinedCount > 0) descParts.push(`${predefinedCount} predefined`)
-
-            toast({
-                title: '✨ Auto-Mapping Regenerated!',
-                description: `Created ${autoGroups.length} groups${descParts.length > 0 ? ` (${descParts.join(', ')})` : ''}. ${prevGroupCount > 0 ? `Previous ${prevGroupCount} groups replaced.` : ''}`,
-                status: 'success',
-                duration: 5000,
-                isClosable: true
-            })
+            // Log regeneration (removed toast notification)
+            console.log(`Auto-mapping regenerated: Created ${autoGroups.length} groups, replaced ${prevGroupCount} previous groups`)
         } else {
-            toast({
-                title: 'No datasets available',
-                description: 'Please select datasets first before generating mappings.',
-                status: 'warning',
-                duration: 3000
-            })
+            console.log('Cannot regenerate mappings: No datasets available')
         }
     }
 
@@ -1634,6 +1823,7 @@ export default function DataComparisonModal({
     const isComparing = comparisonMutation.isPending
 
     return (
+        <>
         <Modal isOpen={isOpen} onClose={onClose} size="6xl">
             <ModalOverlay />
             <ModalContent maxH="90vh" overflowY="auto">
@@ -2063,6 +2253,83 @@ export default function DataComparisonModal({
                                     </Stat>
                                 </SimpleGrid>
 
+                                {/* Multi-Period Breakdown */}
+                                {Array.isArray(period) && period.length > 1 && (
+                                    <Alert status="info" borderRadius="md">
+                                        <AlertIcon />
+                                        <VStack align="start" spacing={2} flex="1">
+                                            <Text fontWeight="bold">Multi-Period Analysis</Text>
+                                            <Text fontSize="sm">
+                                                Compared {period.length} periods: {period.join(', ')}
+                                            </Text>
+                                            <HStack spacing={4} fontSize="sm">
+                                                <Text>
+                                                    <strong>Records per period:</strong>{' '}
+                                                    ~{Math.round(comparisonResults.summary.totalRecords / period.length)}
+                                                </Text>
+                                                <Text>
+                                                    <strong>Total across all periods:</strong>{' '}
+                                                    {comparisonResults.summary.totalRecords}
+                                                </Text>
+                                            </HStack>
+                                        </VStack>
+                                    </Alert>
+                                )}
+
+                                {/* Quality Status Alert */}
+                                {(() => {
+                                    const totalIssues = comparisonResults.summary.mismatchedRecords + comparisonResults.summary.missingRecords
+                                    if (totalIssues === 0) {
+                                        return (
+                                            <Alert status="success" borderRadius="md">
+                                                <AlertIcon />
+                                                <VStack align="start" spacing={1} flex="1">
+                                                    <Text fontWeight="bold">✅ Excellent Data Quality!</Text>
+                                                    <Text fontSize="sm">
+                                                        All data elements match perfectly across all datasets. No discrepancies found.
+                                                    </Text>
+                                                </VStack>
+                                                <Button
+                                                    leftIcon={<FaPaperPlane />}
+                                                    size="sm"
+                                                    colorScheme="green"
+                                                    onClick={() => sendNotificationsMutation.mutate()}
+                                                    isLoading={sendNotificationsMutation.isPending}
+                                                    loadingText="Sending..."
+                                                >
+                                                    Send Notifications
+                                                </Button>
+                                            </Alert>
+                                        )
+                                    } else {
+                                        return (
+                                            <Alert status="warning" borderRadius="md">
+                                                <AlertIcon />
+                                                <VStack align="start" spacing={1} flex="1">
+                                                    <Text fontWeight="bold">⚠️ Data Quality Issues Detected</Text>
+                                                    <Text fontSize="sm">
+                                                        Found <strong>{totalIssues} quality issues</strong>:
+                                                        {comparisonResults.summary.mismatchedRecords > 0 && ` ${comparisonResults.summary.mismatchedRecords} mismatched values`}
+                                                        {comparisonResults.summary.mismatchedRecords > 0 && comparisonResults.summary.missingRecords > 0 && ', '}
+                                                        {comparisonResults.summary.missingRecords > 0 && ` ${comparisonResults.summary.missingRecords} missing values`}.
+                                                        Review the details below to identify and correct inconsistencies.
+                                                    </Text>
+                                                </VStack>
+                                                <Button
+                                                    leftIcon={<FaSms />}
+                                                    size="sm"
+                                                    colorScheme="orange"
+                                                    onClick={() => sendNotificationsMutation.mutate()}
+                                                    isLoading={sendNotificationsMutation.isPending}
+                                                    loadingText="Sending..."
+                                                >
+                                                    Send Alert
+                                                </Button>
+                                            </Alert>
+                                        )
+                                    }
+                                })()}
+
                                 <Divider />
 
                                 {/* Filters */}
@@ -2105,7 +2372,7 @@ export default function DataComparisonModal({
                                     <Box p={4} bg="gray.50" borderRadius="md">
                                         <Heading size="sm" mb={2}>Data Element Value Comparison Results:</Heading>
                                         <Text fontSize="xs" color="gray.600" mb={3}>
-                                            Comparing data element values for <strong>{comparisonResults.comparisonResults[0]?.orgUnitName || destinationOrgUnit}</strong> 
+                                            Comparing data element values for <strong>{comparisonResults.comparisonResults[0]?.orgUnitName || selectedDestOrgNames?.[0] || destinationOrgUnit}</strong>
                                             {' '}in period <strong>{period}</strong> across the selected datasets:
                                         </Text>
                                         <HStack spacing={4} wrap="wrap">
@@ -2385,7 +2652,7 @@ export default function DataComparisonModal({
                                     <Text fontSize="xs">• Source: {sourceUrl}</Text>
                                     <Text fontSize="xs">• {selectedSourceOrgUnits.length} org units</Text>
                                     <Text fontSize="xs">• {selectedDataElements.length} data elements</Text>
-                                    <Text fontSize="xs">• Period: {period}</Text>
+                                    <Text fontSize="xs">• Period: {Array.isArray(period) ? period.join(', ') : period}</Text>
                                     <Text fontSize="xs">• {selectedDatasets.length} datasets mapped</Text>
                                     <Text fontSize="xs">• {dataElementGroups.length} element groups</Text>
                                 </VStack>
@@ -2545,5 +2812,17 @@ export default function DataComparisonModal({
                 </ModalContent>
             </Modal>
         </Modal>
+
+        {/* Progress Tracker - Fixed position overlay */}
+        <ProgressTracker
+            steps={progressSteps}
+            currentStep={currentStepIndex}
+            overallProgress={progress}
+            isVisible={showProgressTracker}
+            onClose={() => setShowProgressTracker(false)}
+            title={progressError ? 'Comparison Failed' : comparisonResults ? 'Comparison Complete' : 'Running Comparison...'}
+            error={progressError}
+        />
+    </>
     )
 }
