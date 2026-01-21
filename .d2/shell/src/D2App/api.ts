@@ -52,7 +52,7 @@ export function createSchedule(payload: {
 
 export async function runDQ(params: RunDQParams) {
     console.log('[api.ts] → POST /api/run-dq', params)
-    console.log('[api.ts] Making fetch request to http://localhost:4000/api/run-dq')
+    console.log('[api.ts] Making fetch request to /api/run-dq')
 
     try {
         // Create AbortController for timeout
@@ -61,7 +61,7 @@ export async function runDQ(params: RunDQParams) {
             controller.abort()
         }, 300000) // 5 minute timeout
 
-        const resp = await fetch('http://localhost:4000/api/run-dq', {
+        const resp = await fetch('/api/run-dq', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(params),
@@ -175,7 +175,7 @@ export interface OrgUnitTreeNode {
 }
 
 export async function validateAuth(sourceUrl: string, sourceUser: string, sourcePass: string): Promise<{ success: boolean; user?: any }> {
-    const resp = await fetch('http://localhost:4000/api/validate-auth', {
+    const resp = await fetch('/api/validate-auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceUrl, sourceUser, sourcePass }),
@@ -190,7 +190,7 @@ export async function validateAuth(sourceUrl: string, sourceUser: string, source
 }
 
 export async function fetchDatasets(sourceUrl: string, sourceUser: string, sourcePass: string): Promise<DHIS2Dataset[]> {
-    const resp = await fetch('http://localhost:4000/api/get-datasets', {
+    const resp = await fetch('/api/get-datasets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceUrl, sourceUser, sourcePass }),
@@ -205,7 +205,7 @@ export async function fetchDatasets(sourceUrl: string, sourceUser: string, sourc
 }
 
 export async function fetchDatasetElements(sourceUrl: string, sourceUser: string, sourcePass: string, datasetId: string): Promise<DHIS2DataElement[]> {
-    const resp = await fetch('http://localhost:4000/api/get-dataset-elements', {
+    const resp = await fetch('/api/get-dataset-elements', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceUrl, sourceUser, sourcePass, datasetId }),
@@ -220,7 +220,7 @@ export async function fetchDatasetElements(sourceUrl: string, sourceUser: string
 }
 
 export async function fetchOrgUnits(sourceUrl: string, sourceUser: string, sourcePass: string): Promise<{ orgUnits: DHIS2OrgUnit[], orgUnitTree: OrgUnitTreeNode[] }> {
-    const resp = await fetch('http://localhost:4000/api/get-org-units', {
+    const resp = await fetch('/api/get-org-units', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceUrl, sourceUser, sourcePass }),
@@ -261,7 +261,7 @@ export async function checkDataAvailability(params: {
         formCompleted: boolean
     }
 }> {
-    const resp = await fetch('http://localhost:4000/api/check-data-availability', {
+    const resp = await fetch('/api/check-data-availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
@@ -290,7 +290,7 @@ export async function getDatasetData(params: {
         lastUpdated?: string
     }>
 }> {
-    const resp = await fetch('http://localhost:4000/api/get-dataset-data', {
+    const resp = await fetch('/api/get-dataset-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
@@ -368,7 +368,7 @@ export interface SavedConfigurationSummary {
 }
 
 export async function getSavedConfigurations(): Promise<SavedConfigurationSummary[]> {
-    const resp = await fetch('http://localhost:4000/api/comparison-configs')
+    const resp = await fetch('/api/comparison-configs')
     
     if (!resp.ok) {
         throw new Error(`Failed to get configurations: ${resp.status}`)
@@ -379,8 +379,8 @@ export async function getSavedConfigurations(): Promise<SavedConfigurationSummar
 
 export async function getConfiguration(id: string, includePasswords: boolean = false): Promise<ComparisonConfiguration> {
     const url = includePasswords 
-        ? `http://localhost:4000/api/comparison-configs/${id}?includePasswords=true`
-        : `http://localhost:4000/api/comparison-configs/${id}`
+        ? `/api/comparison-configs/${id}?includePasswords=true`
+        : `/api/comparison-configs/${id}`
     
     console.log(`[api.ts] Getting configuration ${id}, includePasswords: ${includePasswords}`)
     
@@ -425,7 +425,7 @@ export async function saveConfiguration(config: {
     }>
     isActive?: boolean
 }): Promise<ComparisonConfiguration> {
-    const resp = await fetch('http://localhost:4000/api/comparison-configs', {
+    const resp = await fetch('/api/comparison-configs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
@@ -440,7 +440,7 @@ export async function saveConfiguration(config: {
 }
 
 export async function updateConfiguration(id: string, updates: Partial<ComparisonConfiguration>): Promise<ComparisonConfiguration> {
-    const resp = await fetch(`http://localhost:4000/api/comparison-configs/${id}`, {
+    const resp = await fetch(`/api/comparison-configs/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
@@ -454,7 +454,7 @@ export async function updateConfiguration(id: string, updates: Partial<Compariso
 }
 
 export async function deleteConfiguration(id: string): Promise<void> {
-    const resp = await fetch(`http://localhost:4000/api/comparison-configs/${id}`, {
+    const resp = await fetch(`/api/comparison-configs/${id}`, {
         method: 'DELETE',
     })
     
@@ -464,7 +464,7 @@ export async function deleteConfiguration(id: string): Promise<void> {
 }
 
 export async function toggleConfigurationStatus(id: string): Promise<ComparisonConfiguration> {
-    const resp = await fetch(`http://localhost:4000/api/comparison-configs/${id}/toggle`, {
+    const resp = await fetch(`/api/comparison-configs/${id}/toggle`, {
         method: 'PATCH',
     })
     
@@ -490,7 +490,7 @@ export async function runSavedConfiguration(id: string, params: {
         groups: number
     }
 }> {
-    const resp = await fetch(`http://localhost:4000/api/comparison-configs/${id}/run`, {
+    const resp = await fetch(`/api/comparison-configs/${id}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),

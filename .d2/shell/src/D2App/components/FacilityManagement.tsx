@@ -24,7 +24,7 @@ interface Facility {
     updated_at: string
 }
 
-const API_BASE = 'http://localhost:4000'
+const API_BASE = process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'
 
 export default function FacilityManagement() {
     const toast = useToast()
