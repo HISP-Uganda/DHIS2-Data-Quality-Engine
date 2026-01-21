@@ -19,9 +19,9 @@ node_modules/
 
 # Production builds
 build/
-dist/
 */build/
-*/dist/
+# Allow dq-engine dist for deployment
+!dq-engine/dist/
 
 # Environment variables
 .env
@@ -74,7 +74,6 @@ jspm_packages/
 
 # Nuxt.js build / generate output
 .nuxt
-dist
 
 # Storybook build outputs
 .out
