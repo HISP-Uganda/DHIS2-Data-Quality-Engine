@@ -112,7 +112,7 @@ const ImprovedDashboard: React.FC = () => {
                     <AlertIcon />
                     <VStack align="start" spacing={2} flex={1}>
                         <Text fontWeight="bold">Failed to load dashboard</Text>
-                        <Text fontSize="sm">Make sure the DQ engine is running on port 4000</Text>
+                        <Text fontSize="sm">Make sure the DQ engine is running at {process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'}</Text>
                         <Button size="sm" onClick={handleRefresh} leftIcon={<FaSync />} isLoading={isRefreshing} mt={2}>
                             Retry Connection
                         </Button>
