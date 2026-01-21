@@ -49,11 +49,13 @@ const ImprovedDashboard: React.FC = () => {
     const cardBg = useColorModeValue('white', 'gray.800')
     const borderColor = useColorModeValue('gray.200', 'gray.700')
 
+    const API_BASE = process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'
+
     // Fetch dashboard metrics
     const { data: metrics, isLoading: metricsLoading, error: metricsError, refetch: refetchMetrics } = useQuery({
         queryKey: ['dashboard-metrics'],
         queryFn: async () => {
-            const response = await fetch('http://localhost:4000/api/dashboard-metrics')
+            const response = await fetch(`${API_BASE}/api/dashboard-metrics`)
             if (!response.ok) throw new Error('Failed to fetch metrics')
             return await response.json()
         },
@@ -65,7 +67,7 @@ const ImprovedDashboard: React.FC = () => {
     const { data: dqRuns, isLoading: runsLoading, refetch: refetchRuns } = useQuery({
         queryKey: ['dq-runs'],
         queryFn: async () => {
-            const response = await fetch('http://localhost:4000/api/dq-runs')
+            const response = await fetch(`${API_BASE}/api/dq-runs`)
             if (!response.ok) throw new Error('Failed to fetch DQ runs')
             return await response.json()
         },
@@ -77,7 +79,7 @@ const ImprovedDashboard: React.FC = () => {
     const { data: comparisons, isLoading: comparisonsLoading, refetch: refetchComparisons } = useQuery({
         queryKey: ['comparisons'],
         queryFn: async () => {
-            const response = await fetch('http://localhost:4000/api/comparisons')
+            const response = await fetch(`${API_BASE}/api/comparisons`)
             if (!response.ok) throw new Error('Failed to fetch comparisons')
             return await response.json()
         },
