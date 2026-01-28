@@ -1,6 +1,7 @@
 // API Configuration
 export const API_CONFIG = {
-    DQ_ENGINE_URL: process.env.NODE_ENV === 'development'
-        ? 'http://localhost:4000'
-        : 'https://engine.dqas.hispuganda.org'
+    DQ_ENGINE_URL: import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
 }
+
+// Export as constant for easy access
+export const DQ_ENGINE_URL = API_CONFIG.DQ_ENGINE_URL

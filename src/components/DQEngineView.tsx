@@ -2062,7 +2062,7 @@ export default function DQEngineView() {
                                     if (selectedSourceOrgUnits.length > 0) {
                                         // Send test notification for selected org units
                                         const orgUnitId = selectedSourceOrgUnits[0] // Use first selected org unit
-                                        const apiBase = process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'
+                                        const apiBase = import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
                                         fetch(`${apiBase}/api/notifications/test-dq`, {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
@@ -2115,7 +2115,7 @@ export default function DQEngineView() {
                                     }
 
                                     try {
-                                        const apiBase = process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'
+                                        const apiBase = import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
                                         const response = await fetch(`${apiBase}/api/check-data-availability`, {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },

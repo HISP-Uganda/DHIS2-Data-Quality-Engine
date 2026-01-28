@@ -687,7 +687,7 @@ const validateBusinessRules = (value: string, dataElementName: string): { isVali
 
 // Helper to get API base URL
 const getApiBaseUrl = () => {
-    return process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'
+    return import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
 }
 
 // API function to fetch available datasets

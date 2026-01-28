@@ -68,6 +68,14 @@ export default defineConfig({
                 target: DQ_ENGINE_URL,
                 changeOrigin: true,
             },
+            '/api/comparison-configs': {
+                target: DQ_ENGINE_URL,
+                changeOrigin: true,
+            },
+            '/api/validate-auth': {
+                target: DQ_ENGINE_URL,
+                changeOrigin: true,
+            },
             // Default DHIS2 proxy for other /api/* calls
             '/api': {
                 target: 'https://hmis-tests.health.go.ug',

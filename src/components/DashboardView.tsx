@@ -22,22 +22,24 @@ const DashboardView: React.FC = () => {
     const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
     const [isRefreshing, setIsRefreshing] = useState(false)
     const [useRealData, setUseRealData] = useState(true)
-    
+
     const pageBg = '#F7FAFC'
     const cardBg = '#FFFFFF'
     const headingColor = '#2D3748'
     const textColor = '#4A5568'
     const accent = '#319795'
-    
+
+    const API_BASE = import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
+
     // Fetch real dashboard metrics from API (only if enabled)
     const { data: dashboardMetrics, isLoading, error, refetch } = useQuery({
         queryKey: ['dashboard-metrics', useRealData],
         queryFn: async () => {
             // Since proxy seems to have issues, try direct connection first
-            console.log('Attempting direct connection to DQ engine: http://localhost:4000/api/dashboard-metrics')
-            
+            console.log(`Attempting direct connection to DQ engine: ${API_BASE}/api/dashboard-metrics`)
+
             try {
-                const response = await fetch('http://localhost:4000/api/dashboard-metrics', {
+                const response = await fetch(`${API_BASE}/api/dashboard-metrics`, {
                     mode: 'cors',
                     headers: {
                         'Content-Type': 'application/json',
@@ -579,7 +581,7 @@ const DashboardView: React.FC = () => {
                         <Text fontSize="sm">Error: {error.message}</Text>
                         <Text fontSize="sm">Make sure DQ engine is running on port 4000</Text>
                         <Text fontSize="xs" color="gray.600">
-                            Direct test: <a href="http://localhost:4000/api/dashboard-metrics" target="_blank" rel="noopener">http://localhost:4000/api/dashboard-metrics</a>
+                            Direct test: <a href={`${API_BASE}/api/dashboard-metrics`} target="_blank" rel="noopener">{API_BASE}/api/dashboard-metrics</a>
                         </Text>
                         <Button size="sm" onClick={handleRefresh} leftIcon={<FaSync />} isLoading={isRefreshing}>
                             Retry

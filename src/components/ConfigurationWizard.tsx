@@ -115,7 +115,8 @@ export default function ConfigurationWizard({
                 isActive: true
             }
 
-            const response = await fetch('http://localhost:4000/api/comparison-configs', {
+            const API_BASE = import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
+            const response = await fetch(`${API_BASE}/api/comparison-configs`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configData)

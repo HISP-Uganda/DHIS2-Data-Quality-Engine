@@ -876,28 +876,38 @@ app.post('/api/reset-stats', (_req, res) => {
 
 // Org Units Tree endpoint - fetch flat list from DHIS2 and build tree
 app.get('/api/org-units/tree', async (_req, res) => {
+  console.log('[DQ API] ========================================')
   console.log('[DQ API] GET /api/org-units/tree')
   try {
     const dhis2Url = process.env.DHIS2_URL || 'https://dqas.hispuganda.org/dqa360'
     const username = process.env.DHIS2_USERNAME || 'admin'
     const password = process.env.DHIS2_PASSWORD || 'district'
 
+    console.log('[DQ API] Environment variables:')
+    console.log('[DQ API]   DHIS2_URL:', process.env.DHIS2_URL || '(not set, using default)')
+    console.log('[DQ API]   DHIS2_USERNAME:', process.env.DHIS2_USERNAME || '(not set, using default)')
+    console.log('[DQ API]   DHIS2_PASSWORD:', process.env.DHIS2_PASSWORD ? '***SET***' : '(not set, using default)')
+    console.log('[DQ API] Connecting to:', dhis2Url)
+    console.log('[DQ API] Username:', username)
+
     const auth = Buffer.from(`${username}:${password}`).toString('base64')
+    const fetchUrl = `${dhis2Url}/api/organisationUnits.json?fields=id,displayName,level,path,parent[id]&paging=false`
+    console.log('[DQ API] Fetching from:', fetchUrl)
 
     // Fetch flat list of ALL org units with parent info
-    const response = await fetch(
-      `${dhis2Url}/api/organisationUnits.json?fields=id,displayName,level,path,parent[id]&paging=false`,
-      {
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Accept': 'application/json'
-        }
+    const response = await fetch(fetchUrl, {
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Accept': 'application/json'
       }
-    )
+    })
+
+    console.log('[DQ API] DHIS2 response status:', response.status)
+    console.log('[DQ API] DHIS2 response headers:', Object.fromEntries(response.headers.entries()))
 
     if (!response.ok) {
       const errorBody = await response.text()
-      console.error('[DQ API] DHIS2 error:', response.status, errorBody)
+      console.error('[DQ API] ❌ DHIS2 error response:', response.status, errorBody)
       throw new Error(`DHIS2 API error: ${response.status} - ${errorBody}`)
     }
 

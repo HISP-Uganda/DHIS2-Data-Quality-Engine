@@ -60,7 +60,7 @@ interface ServiceStatus {
 }
 
 // API functions
-const API_BASE = process.env.NODE_ENV === 'development' ? 'http://localhost:4000' : 'https://engine.dqas.hispuganda.org'
+const API_BASE = import.meta.env.VITE_DQ_ENGINE_URL || 'https://engine.dqas.hispuganda.org'
 
 const fetchFacilities = async (): Promise<FacilityContact[]> => {
     const response = await fetch(`${API_BASE}/api/facilities`)
